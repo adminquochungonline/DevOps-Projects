@@ -204,9 +204,13 @@ CREATE TABLE IF NOT EXISTS Employee (
 SQLEOF
 
 # 3. Deploy the WAR as ROOT.war and restart Tomcat.
+#    Stop Tomcat first and remove the default ROOT app (the "It works!" page),
+#    otherwise the pre-exploded ROOT/ directory keeps being served.
+systemctl stop tomcat9 || true
+rm -rf /var/lib/tomcat9/webapps/ROOT /var/lib/tomcat9/webapps/ROOT.war
 curl -fsSL -u "${JFROG_USERNAME}:${JFROG_PASSWORD}" -o /var/lib/tomcat9/webapps/ROOT.war "${WAR_URL}"
 systemctl daemon-reload
-systemctl restart tomcat9
+systemctl start tomcat9
 EOF
 
                         # run-command invoke does not accept "*"; iterate over the
