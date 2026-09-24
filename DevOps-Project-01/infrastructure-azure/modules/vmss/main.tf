@@ -60,18 +60,11 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
     }
   }
 
-  # Roll instances gradually when the model changes (zero-downtime style)
-  upgrade_mode = "Rolling"
+  # Manual upgrade mode: instances are updated on demand (the app pipeline calls
+  # `az vmss update-instances`). Rolling mode would require a health probe /
+  # health extension, which adds complexity not needed for this setup.
+  upgrade_mode = "Manual"
 
-  rolling_upgrade_policy {
-    max_batch_instance_percent              = 20
-    max_unhealthy_instance_percent          = 20
-    max_unhealthy_upgraded_instance_percent = 20
-    pause_time_between_batches              = "PT30S"
-  }
-
-  # Health probe via Application Gateway backend pool requires an extension or
-  # automatic OS upgrade health; keep automatic instance repair off by default.
   tags = {
     Name        = "${var.environment}-web-instance"
     Environment = var.environment
