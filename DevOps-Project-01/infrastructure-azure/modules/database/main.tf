@@ -4,7 +4,8 @@
 # encrypted storage and automated backups.
 
 resource "azurerm_mysql_flexible_server" "main" {
-  name                = "${var.environment}-mysql-server"
+  # Server name is a globally-unique public FQDN; suffix keeps it unique.
+  name                = "${var.environment}-mysql-dp01hung"
   location            = var.location
   resource_group_name = var.resource_group_name
 
@@ -39,7 +40,7 @@ resource "azurerm_mysql_flexible_server" "main" {
   }
 
   tags = {
-    Name        = "${var.environment}-mysql-server"
+    Name        = "${var.environment}-mysql-dp01hung"
     Environment = var.environment
   }
 

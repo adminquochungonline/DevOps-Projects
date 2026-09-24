@@ -164,7 +164,7 @@ pipeline {
                         ARTIFACT="dptweb"
                         GROUP_PATH="com/devopsrealtime"
                         WAR_URL="https://trialm744ol.jfrog.io/artifactory/libs-release-local/${GROUP_PATH}/${ARTIFACT}/${VERSION}/${ARTIFACT}-${VERSION}.war"
-                        MYSQL_FQDN="${ENVIRONMENT}-mysql-server.mysql.database.azure.com"
+                        MYSQL_FQDN="${ENVIRONMENT}-mysql-dp01hung.mysql.database.azure.com"
                         DB_URL="jdbc:mysql://${MYSQL_FQDN}:3306/${DB_NAME}?useSSL=true&requireSSL=true"
 
                         echo "Deploying WAR: ${WAR_URL}"
