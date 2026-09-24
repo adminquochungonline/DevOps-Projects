@@ -14,13 +14,14 @@ terraform {
     }
   }
 
-  backend "azurerm" {
-    # Update these values according to your setup
-    # resource_group_name  = "tfstate-rg"
-    # storage_account_name = "yourtfstateaccount"
-    # container_name       = "tfstate"
-    # key                  = "java-app/terraform.tfstate"
-  }
+  # Using local state (default). For a remote backend on Azure Storage,
+  # create the storage account/container first, then uncomment and fill:
+  # backend "azurerm" {
+  #   resource_group_name  = "tfstate-rg"
+  #   storage_account_name = "yourtfstateaccount"
+  #   container_name       = "tfstate"
+  #   key                  = "java-app/terraform.tfstate"
+  # }
 }
 
 provider "azurerm" {

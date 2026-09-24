@@ -139,8 +139,8 @@ pipeline {
         failure {
             echo 'Infrastructure pipeline failed. Check the stage logs above.'
         }
-        always {
-            cleanWs()
-        }
+        // NOTE: do NOT cleanWs() here. With local Terraform state, wiping the
+        // workspace would delete terraform.tfstate and orphan the created Azure
+        // resources. Keep the workspace so state persists between runs.
     }
 }
