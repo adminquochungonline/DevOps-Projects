@@ -42,6 +42,16 @@ resource "azurerm_mysql_flexible_server" "main" {
     Name        = "${var.environment}-mysql-server"
     Environment = var.environment
   }
+
+  # Azure assigns the availability zone at creation and it cannot be changed
+  # afterwards. Ignore drift on zone (and the HA standby zone) so re-applies
+  # don't attempt an illegal modification.
+  lifecycle {
+    ignore_changes = [
+      zone,
+      high_availability[0].standby_availability_zone,
+    ]
+  }
 }
 
 # Application database
