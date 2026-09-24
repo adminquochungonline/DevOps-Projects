@@ -165,6 +165,8 @@ pipeline {
                         cat > /tmp/deploy.sh <<EOF
 #!/bin/bash
 set -e
+
+# 1. Inject DB settings into Tomcat's environment.
 mkdir -p /etc/systemd/system/tomcat9.service.d
 cat > /etc/systemd/system/tomcat9.service.d/app-env.conf <<ENVEOF
 [Service]
@@ -172,6 +174,24 @@ Environment=DB_URL=${DB_URL}
 Environment=DB_USERNAME=${DB_USER}
 Environment=DB_PASSWORD=${DB_PASS}
 ENVEOF
+
+# 2. Ensure the application database schema exists (idempotent; from any
+#    instance since they share the same private-network access to MySQL).
+apt-get install -y mysql-client >/dev/null 2>&1 || true
+mysql --host="${MYSQL_FQDN}" --user="${DB_USER}" --password="${DB_PASS}" --ssl-mode=REQUIRED "${DB_NAME}" <<SQLEOF || echo "schema init skipped/failed"
+CREATE TABLE IF NOT EXISTS Employee (
+  id int unsigned auto_increment not null,
+  first_name varchar(250),
+  last_name varchar(250),
+  email varchar(250),
+  username varchar(250),
+  password varchar(250),
+  regdate timestamp default current_timestamp,
+  primary key (id)
+);
+SQLEOF
+
+# 3. Deploy the WAR as ROOT.war and restart Tomcat.
 curl -fsSL -u "${JFROG_USERNAME}:${JFROG_PASSWORD}" -o /var/lib/tomcat9/webapps/ROOT.war "${WAR_URL}"
 systemctl daemon-reload
 systemctl restart tomcat9
