@@ -50,8 +50,9 @@ pipeline {
         JAVA_HOME = '/opt/java/jdk-11'
         PATH      = "/opt/java/jdk-11/bin:${env.PATH}"
 
-        APP_DIR   = 'Java-Login-App'
-        INFRA_DIR = 'infrastructure-azure'
+        // Paths are relative to the repo root; this project lives in a subfolder.
+        APP_DIR   = 'DevOps-Project-01/Java-Login-App'
+        INFRA_DIR = 'DevOps-Project-01/infrastructure-azure'
 
         // Local self-hosted CI tools (reachable by container name on the shared
         // 'dp01-cicd' Docker network). Override in the job if you use SaaS.
@@ -63,8 +64,6 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-                sh 'echo "--- workspace root ---"; ls -la'
-                sh 'echo "--- app dir ---"; ls -la "${APP_DIR}" || echo "APP_DIR khong ton tai: ${APP_DIR}"'
                 sh 'java -version && mvn -version'
             }
         }

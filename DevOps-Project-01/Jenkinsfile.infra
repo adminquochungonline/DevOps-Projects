@@ -42,7 +42,8 @@ pipeline {
     }
 
     environment {
-        INFRA_DIR = 'infrastructure-azure'
+        // Path relative to the repo root; this project lives in a subfolder.
+        INFRA_DIR = 'DevOps-Project-01/infrastructure-azure'
     }
 
     stages {
