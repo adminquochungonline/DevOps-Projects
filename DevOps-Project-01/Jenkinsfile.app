@@ -209,13 +209,22 @@ systemctl daemon-reload
 systemctl restart tomcat9
 EOF
 
-                        echo "Running deploy script on all instances..."
-                        az vmss run-command invoke \
-                          --resource-group "${RG}" \
-                          --name "${VMSS}" \
-                          --command-id RunShellScript \
-                          --instance-id "*" \
-                          --scripts @/tmp/deploy.sh
+                        # run-command invoke does not accept "*"; iterate over the
+                        # actual numeric instance IDs of the scale set.
+                        IDS=$(az vmss list-instances -g "${RG}" -n "${VMSS}" --query "[].instanceId" -o tsv)
+                        if [ -z "${IDS}" ]; then
+                            echo "No VMSS instances found."; exit 1
+                        fi
+                        for ID in ${IDS}; do
+                            echo "Running deploy script on instance ${ID}..."
+                            az vmss run-command invoke \
+                              --resource-group "${RG}" \
+                              --name "${VMSS}" \
+                              --command-id RunShellScript \
+                              --instance-id "${ID}" \
+                              --scripts @/tmp/deploy.sh \
+                              --query "value[0].message" -o tsv
+                        done
                     '''
                 }
             }
