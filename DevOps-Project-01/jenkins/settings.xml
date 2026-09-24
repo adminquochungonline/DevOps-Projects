@@ -1,57 +1,67 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<settings xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 http://maven.apache.org/xsd/settings-1.2.0.xsd" xmlns="http://maven.apache.org/SETTINGS/1.2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <!-- Credentials come from environment variables, not hardcoded.
-       Set JFROG_USERNAME / JFROG_PASSWORD before running maven. -->
+<!--
+  Maven settings for CI/CD. Credentials are read from environment variables
+  (injected by Jenkins credentials binding), NOT hardcoded.
+
+  The pipeline sets:
+    JFROG_USERNAME / JFROG_PASSWORD  (from the 'jfrog-creds' credential)
+
+  Use with: mvn -s jenkins/settings.xml deploy
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 http://maven.apache.org/xsd/settings-1.2.0.xsd">
   <servers>
     <server>
+      <id>central</id>
       <username>${env.JFROG_USERNAME}</username>
       <password>${env.JFROG_PASSWORD}</password>
-      <id>central</id>
     </server>
     <server>
+      <id>snapshots</id>
       <username>${env.JFROG_USERNAME}</username>
       <password>${env.JFROG_PASSWORD}</password>
-      <id>snapshots</id>
     </server>
   </servers>
+
   <profiles>
     <profile>
+      <id>artifactory</id>
       <repositories>
         <repository>
-          <snapshots>
-            <enabled>false</enabled>
-          </snapshots>
           <id>central</id>
           <name>libs-release</name>
           <url>https://trialm744ol.jfrog.io/artifactory/libs-release</url>
+          <snapshots>
+            <enabled>false</enabled>
+          </snapshots>
         </repository>
         <repository>
-          <snapshots />
           <id>snapshots</id>
           <name>libs-snapshot</name>
           <url>https://trialm744ol.jfrog.io/artifactory/libs-snapshot</url>
+          <snapshots />
         </repository>
       </repositories>
       <pluginRepositories>
         <pluginRepository>
-          <snapshots>
-            <enabled>false</enabled>
-          </snapshots>
           <id>central</id>
           <name>libs-release</name>
           <url>https://trialm744ol.jfrog.io/artifactory/libs-release</url>
+          <snapshots>
+            <enabled>false</enabled>
+          </snapshots>
         </pluginRepository>
         <pluginRepository>
-          <snapshots />
           <id>snapshots</id>
           <name>libs-snapshot</name>
           <url>https://trialm744ol.jfrog.io/artifactory/libs-snapshot</url>
+          <snapshots />
         </pluginRepository>
       </pluginRepositories>
-      <id>artifactory</id>
     </profile>
   </profiles>
+
   <activeProfiles>
     <activeProfile>artifactory</activeProfile>
   </activeProfiles>

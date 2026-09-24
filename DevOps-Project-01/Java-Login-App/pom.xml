@@ -78,9 +78,14 @@
 <distributionManagement>
     <repository>
         <id>central</id>
-        <name>a0nymgefaiwwu-artifactory-primary-0-releases</name>
-        <url>https://edshopdpt8.jfrog.io/artifactory/libs-release-local</url>
+        <name>libs-release-local</name>
+        <url>https://trialm744ol.jfrog.io/artifactory/libs-release-local</url>
     </repository>
+    <snapshotRepository>
+        <id>snapshots</id>
+        <name>libs-snapshot-local</name>
+        <url>https://trialm744ol.jfrog.io/artifactory/libs-snapshot-local</url>
+    </snapshotRepository>
 </distributionManagement> 
 
 </project>

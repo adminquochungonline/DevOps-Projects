@@ -1,0 +1,60 @@
+# SonarQube stack (standalone) for DevOps-Project-01.
+# Community edition + PostgreSQL backing store.
+#
+# Prereq (host): sysctl -w vm.max_map_count=262144  (Elasticsearch requirement)
+# Start:  docker compose up -d
+# UI: http://localhost:9000   (admin / admin — change on first login)
+
+services:
+  sonarqube:
+    # SonarQube Community Build (active). The old 'lts-community' (9.9.x) is EOL;
+    # Community Build no longer has an LTA line — 'community' is the rolling tag.
+    image: sonarqube:community
+    container_name: dp01-sonarqube
+    restart: unless-stopped
+    depends_on:
+      - sonar-db
+    ports:
+      - "9000:9000"
+    environment:
+      - SONAR_JDBC_URL=jdbc:postgresql://sonar-db:5432/sonar
+      - SONAR_JDBC_USERNAME=sonar
+      - SONAR_JDBC_PASSWORD=sonar
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        limits:
+          memory: 3072m
+    networks:
+      - cicd
+
+  sonar-db:
+    image: postgres:15
+    container_name: dp01-sonar-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=sonar
+      - POSTGRES_PASSWORD=sonar
+      - POSTGRES_DB=sonar
+    volumes:
+      - sonar_pg_data:/var/lib/postgresql/data
+    networks:
+      - cicd
+
+networks:
+  cicd:
+    name: dp01-cicd
+    external: true
+
+volumes:
+  sonarqube_data:
+  sonarqube_extensions:
+  sonarqube_logs:
+  sonar_pg_data:

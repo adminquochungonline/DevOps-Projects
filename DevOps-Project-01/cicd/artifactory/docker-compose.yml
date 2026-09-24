@@ -1,0 +1,60 @@
+# Artifactory stack (standalone) for DevOps-Project-01.
+# JFrog Artifactory OSS + PostgreSQL.
+#
+# NOTE: Recent Artifactory OSS versions no longer allow the embedded Derby DB;
+# an external PostgreSQL is required, so it is bundled in this stack.
+#
+# Start:  docker compose up -d
+# UI: http://localhost:8082   (admin / password — change on first login)
+# Maven/API endpoint: http://localhost:8081/artifactory
+
+services:
+  artifactory:
+    image: releases-docker.jfrog.io/jfrog/artifactory-oss:latest
+    container_name: dp01-artifactory
+    restart: unless-stopped
+    depends_on:
+      - artifactory-db
+    ports:
+      - "8081:8081" # REST/Maven API
+      - "8082:8082" # Web UI (JFrog router)
+    environment:
+      - JF_SHARED_DATABASE_TYPE=postgresql
+      - JF_SHARED_DATABASE_DRIVER=org.postgresql.Driver
+      - JF_SHARED_DATABASE_URL=jdbc:postgresql://artifactory-db:5432/artifactory
+      - JF_SHARED_DATABASE_USERNAME=artifactory
+      - JF_SHARED_DATABASE_PASSWORD=artifactory
+    volumes:
+      - artifactory_data:/var/opt/jfrog/artifactory
+    ulimits:
+      nofile:
+        soft: 32000
+        hard: 40000
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+    networks:
+      - cicd
+
+  artifactory-db:
+    image: postgres:15
+    container_name: dp01-artifactory-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=artifactory
+      - POSTGRES_PASSWORD=artifactory
+      - POSTGRES_DB=artifactory
+    volumes:
+      - artifactory_pg_data:/var/lib/postgresql/data
+    networks:
+      - cicd
+
+networks:
+  cicd:
+    name: dp01-cicd
+    external: true
+
+volumes:
+  artifactory_data:
+  artifactory_pg_data:

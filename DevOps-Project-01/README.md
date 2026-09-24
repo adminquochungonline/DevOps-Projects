@@ -1,6 +1,6 @@
-# Deploy Java Application on AWS 3-Tier Architecture
+# Deploy Java Application on Azure 3-Tier Architecture
 
-![AWS Architecture](https://imgur.com/b9iHwVc.png)
+![Azure Architecture](https://imgur.com/b9iHwVc.png)
 
 ## Table of Contents
 
@@ -8,7 +8,7 @@
 2. [Architecture Overview](#architecture-overview)
 3. [Pre-Requisites](#pre-requisites)
 4. [Infrastructure Setup](#infrastructure-setup)
-   - [VPC and Networking](#vpc-and-networking)
+   - [Virtual Network and Networking](#virtual-network-and-networking)
    - [Security Configuration](#security-configuration)
    - [Database Layer](#database-layer)
 5. [Application Setup](#application-setup)
@@ -30,11 +30,13 @@
 
 ## Introduction
 
-This project demonstrates the deployment of a production-grade Java web application using AWS's robust 3-tier architecture. The implementation follows cloud-native best practices, ensuring high availability, scalability, and security across all application tiers.
+This project demonstrates the deployment of a production-grade Java web application using Microsoft Azure's robust 3-tier architecture. The implementation follows cloud-native best practices, ensuring high availability, scalability, and security across all application tiers.
+
+> The Terraform code for this Azure deployment lives in [`infrastructure-azure/`](./infrastructure-azure). An earlier AWS version is preserved in [`infrastructure/`](./infrastructure) for reference.
 
 ### Key Features
 
-- **High Availability**: Multi-AZ deployment with automated failover
+- **High Availability**: Zone-redundant deployment with automated failover
 - **Auto Scaling**: Dynamic resource allocation based on demand
 - **Security**: Defense-in-depth approach with multiple security layers
 - **Monitoring**: Comprehensive logging and monitoring setup
@@ -45,45 +47,45 @@ This project demonstrates the deployment of a production-grade Java web applicat
 ### Infrastructure Components
 
 1. **Presentation Tier (Frontend)**
-   - Nginx web servers in Auto Scaling Group
-   - Public-facing Network Load Balancer
-   - CloudFront Distribution for static content
+   - Nginx web servers in a Virtual Machine Scale Set
+   - Public-facing Application Gateway (Layer 7 load balancer)
+   - Azure CDN for static content
 
 2. **Application Tier (Backend)**
-   - Apache Tomcat servers in Auto Scaling Group
-   - Internal Network Load Balancer
-   - Session management with Amazon ElastiCache
+   - Apache Tomcat servers in a Virtual Machine Scale Set
+   - Internal load balancing via Application Gateway backend pools
+   - Session management with Azure Cache for Redis
 
 3. **Data Tier**
-   - Amazon RDS MySQL in Multi-AZ configuration
-   - Automated backups and point-in-time recovery
+   - Azure Database for MySQL Flexible Server with zone-redundant HA
+   - Automated backups and point-in-time restore
    - Read replicas for read-heavy workloads
 
 ### Network Architecture
 
-- **VPC Design**
-  - Two separate VPCs (192.168.0.0/16 and 172.32.0.0/16)
-  - Public and private subnets across multiple AZs
-  - Transit Gateway for inter-VPC communication
+- **Virtual Network (VNet) Design**
+  - VNet with address space `192.168.0.0/16`
+  - Public and private subnets across multiple availability zones
+  - A delegated subnet for MySQL Flexible Server VNet integration
+  - VNet peering for inter-VNet communication when required
 
 # Pre-Requisites
 
 ## Required Accounts and Tools
 
-### 1. AWS Account Setup
-- Create an [AWS Free Tier Account](https://aws.amazon.com/free/)
-- Install AWS CLI v2
+### 1. Azure Account Setup
+- Create an [Azure Free Account](https://azure.microsoft.com/free/)
+- Install the Azure CLI
   ```bash
   # For Linux
-  curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-  unzip awscliv2.zip
-  sudo ./aws/install
+  curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
   # For macOS
-  brew install awscli
+  brew install azure-cli
 
-  # Configure AWS CLI
-  aws configure
+  # Sign in
+  az login
+  az account set --subscription "<your-subscription-id>"
   ```
 
 ### 2. Development Tools
@@ -95,6 +97,22 @@ This project demonstrates the deployment of a production-grade Java web applicat
 
   # For macOS
   brew install git
+  ```
+
+- **Terraform**: Infrastructure as Code
+  ```bash
+  # For Linux
+  sudo apt-get update && sudo apt-get install -y gnupg software-properties-common
+  wget -O- https://apt.releases.hashicorp.com/gpg | \
+    gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
+  echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+    https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+    sudo tee /etc/apt/sources.list.d/hashicorp.list
+  sudo apt-get update && sudo apt-get install terraform
+
+  # For macOS
+  brew tap hashicorp/tap
+  brew install hashicorp/tap/terraform
   ```
 
 ### 3. CI/CD Integration
@@ -128,114 +146,291 @@ This project demonstrates the deployment of a production-grade Java web applicat
 
 # Infrastructure Setup
 
-## VPC and Networking
+This project provisions the same Azure infrastructure in **two equivalent ways**:
 
-### 1. VPC Creation
+- **Terraform (recommended)** — declarative Infrastructure as Code in
+  [`infrastructure-azure/`](./infrastructure-azure). This is the source of truth:
+  it manages state and lets you `apply`/`destroy` everything at once.
+- **Azure CLI** — the imperative, step-by-step equivalent, useful for learning
+  what each resource is.
+
+Both paths create **the same resources with the same names and values**. The
+examples below assume `environment = "dev"` and `location = "southeastasia"`, which
+yields resource names such as `dev-java-app-rg`, `dev-vnet`, `dev-mysql-server`.
+Adjust the `dev-` prefix and region if you change those inputs.
+
+> Reference of shared values: resource group `dev-java-app-rg`, VNet
+> `dev-vnet` (`192.168.0.0/16`), public subnet `dev-public-subnet-1`
+> (`192.168.1.0/24`), private subnet `dev-private-subnet-1` (`192.168.3.0/24`),
+> database subnet `dev-database-subnet` (`192.168.10.0/24`).
+
+### Option A — Terraform (all tiers at once)
+
 ```bash
-# Create primary VPC
-aws ec2 create-vpc \
-    --cidr-block 192.168.0.0/16 \
-    --tag-specifications 'ResourceType=vpc,Tags=[{Key=Name,Value=PrimaryVPC}]' \
-    --region us-east-1
+cd infrastructure-azure
+terraform init
 
-# Create secondary VPC
-aws ec2 create-vpc \
-    --cidr-block 172.32.0.0/16 \
-    --tag-specifications 'ResourceType=vpc,Tags=[{Key=Name,Value=SecondaryVPC}]' \
-    --region us-east-1
+# Provide required variables via terraform.tfvars
+cat > terraform.tfvars <<'EOF'
+environment          = "dev"
+location             = "southeastasia"
+vnet_cidr            = "192.168.0.0/16"
+public_subnets       = ["192.168.1.0/24", "192.168.2.0/24"]
+private_subnets      = ["192.168.3.0/24", "192.168.4.0/24"]
+db_username          = "mysqladmin"
+db_password          = "YourSecurePassword"
+admin_ssh_public_key = "ssh-rsa AAAA... your-key"
+allowed_ssh_source_ranges = ["<your-ip>/32"]
+EOF
+
+terraform plan -out=tfplan
+terraform apply tfplan
+```
+
+This single apply creates the VNet, subnets, NAT gateway, NSGs, MySQL Flexible
+Server, Application Gateway, VM Scale Set and monitoring. The sections below map
+each tier to its Terraform module and the equivalent Azure CLI commands.
+
+## Virtual Network and Networking
+
+Terraform module: [`modules/network`](./infrastructure-azure/modules/network).
+
+### 1. Resource Group and VNet Creation
+
+**Terraform** (root `main.tf` + network module):
+```hcl
+resource "azurerm_resource_group" "main" {
+  name     = "${var.environment}-java-app-rg" # dev-java-app-rg
+  location = var.location                     # southeastasia
+}
+
+resource "azurerm_virtual_network" "main" {
+  name                = "${var.environment}-vnet" # dev-vnet
+  resource_group_name = azurerm_resource_group.main.name
+  location            = var.location
+  address_space       = [var.vnet_cidr]           # 192.168.0.0/16
+}
+```
+
+**Azure CLI** (equivalent):
+```bash
+az group create \
+    --name dev-java-app-rg \
+    --location southeastasia
+
+az network vnet create \
+    --resource-group dev-java-app-rg \
+    --name dev-vnet \
+    --address-prefix 192.168.0.0/16 \
+    --location southeastasia
 ```
 
 ### 2. Subnet Configuration
-```bash
-# Create public subnet
-aws ec2 create-subnet \
-    --vpc-id vpc-xxx \
-    --cidr-block 192.168.1.0/24 \
-    --availability-zone us-east-1a \
-    --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=PublicSubnet1}]'
 
-# Create private subnet
-aws ec2 create-subnet \
-    --vpc-id vpc-xxx \
-    --cidr-block 192.168.2.0/24 \
-    --availability-zone us-east-1b \
-    --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=PrivateSubnet1}]'
+**Terraform**:
+```hcl
+resource "azurerm_subnet" "public" {
+  name                 = "${var.environment}-public-subnet-1" # dev-public-subnet-1
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = [var.public_subnets[0]]              # 192.168.1.0/24
+}
+
+resource "azurerm_subnet" "private" {
+  name                 = "${var.environment}-private-subnet-1" # dev-private-subnet-1
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = [var.private_subnets[0]]              # 192.168.3.0/24
+}
 ```
 
-### 3. Gateway Setup
+**Azure CLI**:
 ```bash
-# Create and attach Internet Gateway
-aws ec2 create-internet-gateway
-aws ec2 attach-internet-gateway --vpc-id vpc-xxx --internet-gateway-id igw-xxx
+# Public (gateway) subnet
+az network vnet subnet create \
+    --resource-group dev-java-app-rg \
+    --vnet-name dev-vnet \
+    --name dev-public-subnet-1 \
+    --address-prefixes 192.168.1.0/24
 
-# Create NAT Gateway
-aws ec2 create-nat-gateway \
-    --subnet-id subnet-xxx \
-    --allocation-id eipalloc-xxx \
-    --tag-specifications 'ResourceType=natgateway,Tags=[{Key=Name,Value=PrimaryNATGateway}]'
+# Private (application) subnet
+az network vnet subnet create \
+    --resource-group dev-java-app-rg \
+    --vnet-name dev-vnet \
+    --name dev-private-subnet-1 \
+    --address-prefixes 192.168.3.0/24
+```
+
+### 3. Outbound Connectivity (NAT Gateway)
+
+**Terraform**:
+```hcl
+resource "azurerm_public_ip" "nat" {
+  name                = "${var.environment}-nat-pip" # dev-nat-pip
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_nat_gateway" "main" {
+  name                = "${var.environment}-nat" # dev-nat
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  sku_name            = "Standard"
+}
+```
+
+**Azure CLI**:
+```bash
+az network public-ip create \
+    --resource-group dev-java-app-rg \
+    --name dev-nat-pip \
+    --sku Standard \
+    --allocation-method Static
+
+az network nat gateway create \
+    --resource-group dev-java-app-rg \
+    --name dev-nat \
+    --public-ip-addresses dev-nat-pip
+
+# Associate the NAT gateway with the private subnet
+az network vnet subnet update \
+    --resource-group dev-java-app-rg \
+    --vnet-name dev-vnet \
+    --name dev-private-subnet-1 \
+    --nat-gateway dev-nat
 ```
 
 ## Security Configuration
 
-### 1. Security Groups
-```bash
-# Create frontend security group
-aws ec2 create-security-group \
-    --group-name FrontendSG \
-    --description "Security group for frontend servers" \
-    --vpc-id vpc-xxx
+Terraform module: [`modules/security`](./infrastructure-azure/modules/security).
+It creates four NSGs: `dev-gateway-nsg`, `dev-app-nsg`, `dev-db-nsg`,
+`dev-bastion-nsg`.
 
-# Allow inbound HTTP/HTTPS
-aws ec2 authorize-security-group-ingress \
-    --group-id sg-xxx \
-    --protocol tcp \
-    --port 80 \
-    --cidr 0.0.0.0/0
+### 1. Network Security Groups
 
-aws ec2 authorize-security-group-ingress \
-    --group-id sg-xxx \
-    --protocol tcp \
-    --port 443 \
-    --cidr 0.0.0.0/0
-```
+**Terraform** (gateway NSG shown; app/db/bastion follow the same pattern):
+```hcl
+resource "azurerm_network_security_group" "gateway" {
+  name                = "${var.environment}-gateway-nsg" # dev-gateway-nsg
+  resource_group_name = var.resource_group_name
+  location            = var.location
 
-### 2. IAM Roles and Policies
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "s3:GetObject",
-                "s3:PutObject"
-            ],
-            "Resource": "arn:aws:s3:::your-bucket/*"
-        }
-    ]
+  security_rule {
+    name                       = "AllowHTTP"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "Internet"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "AllowHTTPS"
+    priority                   = 110
+    # ...same shape, destination_port_range = "443"
+  }
 }
 ```
 
+**Azure CLI**:
+```bash
+az network nsg create \
+    --resource-group dev-java-app-rg \
+    --name dev-gateway-nsg
+
+az network nsg rule create \
+    --resource-group dev-java-app-rg \
+    --nsg-name dev-gateway-nsg \
+    --name AllowHTTP \
+    --priority 100 \
+    --direction Inbound --access Allow --protocol Tcp \
+    --source-address-prefixes Internet \
+    --destination-port-ranges 80
+
+az network nsg rule create \
+    --resource-group dev-java-app-rg \
+    --nsg-name dev-gateway-nsg \
+    --name AllowHTTPS \
+    --priority 110 \
+    --direction Inbound --access Allow --protocol Tcp \
+    --source-address-prefixes Internet \
+    --destination-port-ranges 443
+```
+
+The database NSG (`dev-db-nsg`) allows MySQL (3306) only from the VNet, and the
+bastion NSG (`dev-bastion-nsg`) allows SSH (22) only from
+`allowed_ssh_source_ranges`.
+
 ## Database Layer
 
-### 1. RDS Instance Creation
+Terraform module: [`modules/database`](./infrastructure-azure/modules/database).
+
+### 1. MySQL Flexible Server Creation
+
+**Terraform**:
+```hcl
+resource "azurerm_mysql_flexible_server" "main" {
+  name                = "${var.environment}-mysql-server" # dev-mysql-server
+  resource_group_name = var.resource_group_name
+  location            = var.location
+
+  administrator_login    = var.db_username # mysqladmin
+  administrator_password = var.db_password
+
+  version  = "8.0.21"
+  sku_name = "B_Standard_B1ms"
+
+  delegated_subnet_id = var.delegated_subnet_id # dev-database-subnet
+  private_dns_zone_id = var.private_dns_zone_id
+
+  storage {
+    size_gb = 20
+  }
+
+  high_availability {
+    mode = "ZoneRedundant"
+  }
+}
+
+resource "azurerm_mysql_flexible_database" "main" {
+  name        = var.db_name # javaapp
+  server_name = azurerm_mysql_flexible_server.main.name
+  # ...
+}
+```
+
+**Azure CLI** (equivalent):
 ```bash
-aws rds create-db-instance \
-    --db-instance-identifier prod-mysql \
-    --db-instance-class db.t3.medium \
-    --engine mysql \
-    --master-username admin \
-    --master-user-password "YourSecurePassword" \
-    --allocated-storage 20 \
-    --multi-az \
-    --vpc-security-group-ids sg-xxx \
-    --db-subnet-group-name your-db-subnet-group
+az mysql flexible-server create \
+    --resource-group dev-java-app-rg \
+    --name dev-mysql-server \
+    --location southeastasia \
+    --admin-user mysqladmin \
+    --admin-password "YourSecurePassword" \
+    --sku-name Standard_B1ms \
+    --tier Burstable \
+    --version 8.0.21 \
+    --storage-size 20 \
+    --high-availability ZoneRedundant \
+    --vnet dev-vnet \
+    --subnet dev-database-subnet
+
+# Create the application database
+az mysql flexible-server db create \
+    --resource-group dev-java-app-rg \
+    --server-name dev-mysql-server \
+    --database-name javaapp
 ```
 
 ### 2. Database Initialization
 ```sql
--- Connect to database
-mysql -h your-rds-endpoint -u admin -p
+-- Connect to database (TLS enforced)
+mysql -h your-server.mysql.database.azure.com -u mysqladmin -p
 
 -- Create application database
 CREATE DATABASE javaapp;
@@ -332,7 +527,7 @@ EOF
 ```nginx
 # /etc/nginx/conf.d/app.conf
 upstream backend {
-    server internal-nlb-xxx.elb.amazonaws.com:8080;
+    server <application-gateway-private-ip>:8080;
 }
 
 server {
@@ -346,119 +541,250 @@ server {
     }
 
     location /static/ {
-        proxy_pass https://your-cloudfront-distribution.cloudfront.net;
+        proxy_pass https://your-azure-cdn-endpoint.azureedge.net;
     }
 }
 ```
 
 ## Load Balancing and Auto Scaling
 
-### 1. Launch Template Configuration
-```bash
-aws ec2 create-launch-template \
-    --launch-template-name WebServerTemplate \
-    --version-description WebServerVersion1 \
-    --launch-template-data '{
-        "ImageId": "ami-xxx",
-        "InstanceType": "t3.micro",
-        "SecurityGroupIds": ["sg-xxx"],
-        "UserData": "IyEvYmluL2Jhc2gKCiMgSW5zdGFsbCBOZ2lueApzdWRvIHl1bSBpbnN0YWxsIG5naW54IC15Cg=="
-    }'
+Terraform modules: [`modules/appgw`](./infrastructure-azure/modules/appgw)
+(Application Gateway `dev-appgw`, listener on port 80 → backend 8080) and
+[`modules/vmss`](./infrastructure-azure/modules/vmss) (VM Scale Set `dev-vmss`).
+
+### 1. VM Scale Set Creation
+
+**Terraform**:
+```hcl
+resource "azurerm_linux_virtual_machine_scale_set" "main" {
+  name                = "${var.environment}-vmss" # dev-vmss
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  sku                 = var.vm_size   # Standard_B1ms
+  instances           = var.instances # 2
+
+  admin_username                  = var.admin_username # azureuser
+  disable_password_authentication = true
+
+  admin_ssh_key {
+    username   = var.admin_username
+    public_key = var.admin_ssh_public_key
+  }
+
+  custom_data = base64encode(file("cloud-init.txt")) # installs Java 11 + Tomcat
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts-gen2" # Ubuntu 22.04
+    version   = "latest"
+  }
+
+  network_interface {
+    name    = "${var.environment}-vmss-nic"
+    primary = true
+    ip_configuration {
+      name                                         = "internal"
+      primary                                      = true
+      subnet_id                                    = var.private_subnet_id # dev-private-subnet-1
+      application_gateway_backend_address_pool_ids = var.backend_address_pool_ids
+    }
+  }
+}
 ```
 
-### 2. Auto Scaling Group
+**Azure CLI** (equivalent):
 ```bash
-aws autoscaling create-auto-scaling-group \
-    --auto-scaling-group-name WebServerASG \
-    --launch-template LaunchTemplateName=WebServerTemplate,Version='$Latest' \
-    --min-size 2 \
-    --max-size 6 \
-    --desired-capacity 2 \
-    --vpc-zone-identifier "subnet-xxx,subnet-yyy" \
-    --target-group-arns "arn:aws:elasticloadbalancing:region:account-id:targetgroup/your-target-group/xxx" \
-    --health-check-type ELB \
-    --health-check-grace-period 300
+az vmss create \
+    --resource-group dev-java-app-rg \
+    --name dev-vmss \
+    --image Ubuntu2204 \
+    --vm-sku Standard_B1ms \
+    --instance-count 2 \
+    --vnet-name dev-vnet \
+    --subnet dev-private-subnet-1 \
+    --admin-username azureuser \
+    --ssh-key-values ~/.ssh/id_rsa.pub \
+    --custom-data cloud-init.txt \
+    --app-gateway dev-appgw \
+    --backend-pool-name dev-appgw-beap
+```
+
+### 2. Autoscale Configuration
+
+**Terraform**:
+```hcl
+resource "azurerm_monitor_autoscale_setting" "main" {
+  name                = "${var.environment}-vmss-autoscale" # dev-vmss-autoscale
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  target_resource_id  = azurerm_linux_virtual_machine_scale_set.main.id
+
+  profile {
+    name = "default"
+    capacity {
+      default = var.instances     # 2
+      minimum = var.min_instances # 2
+      maximum = var.max_instances # 6
+    }
+
+    rule { # scale out when CPU > 70%
+      metric_trigger {
+        metric_name = "Percentage CPU"
+        operator    = "GreaterThan"
+        threshold   = 70
+        # ...
+      }
+      scale_action {
+        direction = "Increase"
+        value     = "1"
+      }
+    }
+
+    rule { # scale in when CPU < 30%
+      metric_trigger {
+        metric_name = "Percentage CPU"
+        operator    = "LessThan"
+        threshold   = 30
+        # ...
+      }
+      scale_action {
+        direction = "Decrease"
+        value     = "1"
+      }
+    }
+  }
+}
+```
+
+**Azure CLI** (equivalent):
+```bash
+az monitor autoscale create \
+    --resource-group dev-java-app-rg \
+    --resource dev-vmss \
+    --resource-type Microsoft.Compute/virtualMachineScaleSets \
+    --name dev-vmss-autoscale \
+    --min-count 2 --max-count 6 --count 2
+
+# Scale out when average CPU exceeds 70%
+az monitor autoscale rule create \
+    --resource-group dev-java-app-rg \
+    --autoscale-name dev-vmss-autoscale \
+    --condition "Percentage CPU > 70 avg 5m" \
+    --scale out 1
+
+# Scale in when average CPU drops below 30%
+az monitor autoscale rule create \
+    --resource-group dev-java-app-rg \
+    --autoscale-name dev-vmss-autoscale \
+    --condition "Percentage CPU < 30 avg 5m" \
+    --scale in 1
 ```
 
 # Monitoring and Maintenance
 
-## CloudWatch Setup
+Terraform module: [`modules/monitoring`](./infrastructure-azure/modules/monitoring).
+It creates a Log Analytics workspace (`dev-application-law`), an action group
+(`dev-alerts-ag`), and metric alerts for MySQL CPU (>80%), MySQL memory (>90%)
+and VMSS CPU (>70%).
 
-### 1. Metrics Configuration
+## Azure Monitor Setup
+
+### 1. Metrics and Alerts Configuration
+
+**Terraform**:
+```hcl
+resource "azurerm_monitor_action_group" "main" {
+  name                = "${var.environment}-alerts-ag" # dev-alerts-ag
+  resource_group_name = var.resource_group_name
+  short_name          = "alerts"
+}
+
+resource "azurerm_monitor_metric_alert" "vmss_cpu" {
+  name                = "${var.environment}-vmss-high-cpu" # dev-vmss-high-cpu
+  resource_group_name = var.resource_group_name
+  scopes              = [var.vmss_id]
+  frequency           = "PT5M"
+  window_size         = "PT5M"
+
+  criteria {
+    metric_namespace = "Microsoft.Compute/virtualMachineScaleSets"
+    metric_name      = "Percentage CPU"
+    aggregation      = "Average"
+    operator         = "GreaterThan"
+    threshold        = 70
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.main.id
+  }
+}
+```
+
+**Azure CLI** (equivalent):
 ```bash
-# Create custom metric for memory usage
-cat << EOF > /opt/aws/scripts/memory-metrics.sh
-#!/bin/bash
-MEMORY_USAGE=\$(free | grep Mem | awk '{print \$3/\$2 * 100.0}')
-aws cloudwatch put-metric-data \
-    --metric-name MemoryUsage \
-    --namespace CustomMetrics \
-    --value \$MEMORY_USAGE \
-    --dimensions InstanceId=\$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-EOF
+az monitor action-group create \
+    --resource-group dev-java-app-rg \
+    --name dev-alerts-ag \
+    --short-name alerts
 
-# Add to crontab
-echo "* * * * * /opt/aws/scripts/memory-metrics.sh" | crontab -
+# Alert when VMSS CPU exceeds 70%
+az monitor metrics alert create \
+    --resource-group dev-java-app-rg \
+    --name dev-vmss-high-cpu \
+    --scopes "/subscriptions/<sub-id>/resourceGroups/dev-java-app-rg/providers/Microsoft.Compute/virtualMachineScaleSets/dev-vmss" \
+    --condition "avg Percentage CPU > 70" \
+    --window-size 5m \
+    --evaluation-frequency 5m \
+    --action dev-alerts-ag
 ```
 
 ### 2. Log Management
-```bash
-# Configure CloudWatch agent
-cat << EOF > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
-{
-    "agent": {
-        "metrics_collection_interval": 60,
-        "run_as_user": "root"
-    },
-    "logs": {
-        "logs_collected": {
-            "files": {
-                "collect_list": [
-                    {
-                        "file_path": "/opt/tomcat/logs/catalina.out",
-                        "log_group_name": "/aws/tomcat/application",
-                        "log_stream_name": "{instance_id}",
-                        "timezone": "UTC"
-                    }
-                ]
-            }
-        }
-    },
-    "metrics": {
-        "metrics_collected": {
-            "mem": {
-                "measurement": [
-                    "mem_used_percent"
-                ]
-            },
-            "swap": {
-                "measurement": [
-                    "swap_used_percent"
-                ]
-            }
-        }
-    }
+
+**Terraform**:
+```hcl
+resource "azurerm_log_analytics_workspace" "application" {
+  name                = "${var.environment}-application-law" # dev-application-law
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
 }
-EOF
+```
+
+**Azure CLI** (equivalent):
+```bash
+az monitor log-analytics workspace create \
+    --resource-group dev-java-app-rg \
+    --workspace-name dev-application-law \
+    --retention-time 30
+
+# Enable the Azure Monitor Agent on the scale set to collect Tomcat logs
+# (catalina.out) and system metrics such as memory and swap usage.
+az vmss extension set \
+    --resource-group dev-java-app-rg \
+    --vmss-name dev-vmss \
+    --name AzureMonitorLinuxAgent \
+    --publisher Microsoft.Azure.Monitor
 ```
 
 # Security Best Practices
 
 ## 1. Network Security
-- Implement network ACLs
-- Use security groups effectively
-- Enable VPC Flow Logs
-- Configure AWS WAF
+- Apply Network Security Groups per tier
+- Use Application Security Groups for grouping workloads
+- Enable NSG Flow Logs to a Log Analytics workspace
+- Configure Azure Web Application Firewall (WAF) on Application Gateway
 
 ## 2. Application Security
 - Regular security patches
-- Implement AWS Shield
-- Use AWS Secrets Manager
-- Enable AWS GuardDuty
+- Enable Azure DDoS Protection
+- Use Azure Key Vault for secrets
+- Enable Microsoft Defender for Cloud
 
 ## 3. Data Security
-- Enable encryption at rest
-- Use SSL/TLS for data in transit
+- Enable encryption at rest (enabled by default on Azure managed disks and MySQL)
+- Enforce SSL/TLS for data in transit (`require_secure_transport = ON`)
 - Regular security audits
 - Implement backup strategies
 
@@ -468,14 +794,16 @@ EOF
 
 ### 1. Connection Issues
 ```bash
-# Check connectivity
-telnet database-endpoint 3306
+# Check connectivity to the database
+nc -zv dev-mysql-server.mysql.database.azure.com 3306
 
-# Verify security group rules
-aws ec2 describe-security-groups --group-ids sg-xxx
+# Verify NSG rules
+az network nsg rule list --resource-group dev-java-app-rg --nsg-name dev-db-nsg -o table
 
-# Test load balancer health
-aws elbv2 describe-target-health --target-group-arn arn:aws:elasticloadbalancing:region:account-id:targetgroup/your-target-group/xxx
+# Check Application Gateway backend health
+az network application-gateway show-backend-health \
+    --resource-group dev-java-app-rg \
+    --name dev-appgw
 ```
 
 ### 2. Performance Issues

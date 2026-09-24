@@ -1,0 +1,145 @@
+// Infrastructure pipeline for DevOps-Project-01.
+// Provisions the Azure infrastructure with Terraform (infrastructure-azure).
+// Flow: init/validate -> plan -> MANUAL APPROVAL -> apply (or destroy).
+//
+// This pipeline does NOT build or deploy the application. Run the application
+// pipeline (Jenkinsfile.app) after the infrastructure exists.
+//
+// Required Jenkins credentials:
+//   azure-sp          (Username with password)  -> Service Principal appId/password
+//   azure-tenant      (Secret text)             -> Azure tenant ID
+//   azure-subscription(Secret text)             -> Azure subscription ID
+//   tf-db-username    (Secret text)             -> Terraform db_username
+//   tf-db-password    (Secret text)             -> Terraform db_password
+//   vmss-ssh-pubkey   (Secret text)             -> Terraform admin_ssh_public_key
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 60, unit: 'MINUTES')
+    }
+
+    parameters {
+        choice(
+            name: 'TF_ACTION',
+            choices: ['plan-only', 'apply', 'destroy'],
+            description: 'Terraform action. "apply"/"destroy" pause for approval after the plan.'
+        )
+        string(
+            name: 'ENVIRONMENT',
+            defaultValue: 'dev',
+            description: 'Target environment (matches the Terraform environment/name prefix).'
+        )
+        string(
+            name: 'LOCATION',
+            defaultValue: 'southeastasia',
+            description: 'Azure region.'
+        )
+    }
+
+    environment {
+        INFRA_DIR = 'infrastructure-azure'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh 'terraform version'
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET'),
+                    string(credentialsId: 'azure-tenant', variable: 'ARM_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'ARM_SUBSCRIPTION_ID'),
+                    string(credentialsId: 'tf-db-username', variable: 'TF_VAR_db_username'),
+                    string(credentialsId: 'tf-db-password', variable: 'TF_VAR_db_password'),
+                    string(credentialsId: 'vmss-ssh-pubkey', variable: 'TF_VAR_admin_ssh_public_key')
+                ]) {
+                    dir("${INFRA_DIR}") {
+                        sh '''
+                            export TF_VAR_environment=${ENVIRONMENT}
+                            export TF_VAR_location=${LOCATION}
+                            terraform init -input=false
+                            terraform validate
+                            if [ "${TF_ACTION}" = "destroy" ]; then
+                                terraform plan -destroy -input=false -out=tfplan
+                            else
+                                terraform plan -input=false -out=tfplan
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Approval') {
+            when {
+                expression { return params.TF_ACTION == 'apply' || params.TF_ACTION == 'destroy' }
+            }
+            steps {
+                script {
+                    timeout(time: 30, unit: 'MINUTES') {
+                        input(
+                            message: "Review the Terraform plan above. Proceed with '${params.TF_ACTION}' on '${params.ENVIRONMENT}'?",
+                            ok: "Yes, ${params.TF_ACTION}"
+                        )
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            when {
+                expression { return params.TF_ACTION == 'apply' || params.TF_ACTION == 'destroy' }
+            }
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET'),
+                    string(credentialsId: 'azure-tenant', variable: 'ARM_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'ARM_SUBSCRIPTION_ID'),
+                    string(credentialsId: 'tf-db-username', variable: 'TF_VAR_db_username'),
+                    string(credentialsId: 'tf-db-password', variable: 'TF_VAR_db_password'),
+                    string(credentialsId: 'vmss-ssh-pubkey', variable: 'TF_VAR_admin_ssh_public_key')
+                ]) {
+                    dir("${INFRA_DIR}") {
+                        // tfplan already encodes apply-or-destroy from the plan stage
+                        sh 'terraform apply -input=false -auto-approve tfplan'
+                    }
+                }
+            }
+        }
+
+        stage('Output') {
+            when { expression { return params.TF_ACTION == 'apply' } }
+            steps {
+                dir("${INFRA_DIR}") {
+                    sh '''
+                        echo "=== Infrastructure outputs ==="
+                        terraform output || true
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Infrastructure pipeline completed ('${params.TF_ACTION}') for '${params.ENVIRONMENT}'."
+        }
+        failure {
+            echo 'Infrastructure pipeline failed. Check the stage logs above.'
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

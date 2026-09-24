@@ -1,0 +1,26 @@
+# Jenkins plugins pre-installed into the controller image.
+# Pipeline / job DSL
+workflow-aggregator
+pipeline-stage-view
+pipeline-utility-steps
+
+# Git / SCM
+git
+github
+github-branch-source
+
+# Credentials
+credentials
+credentials-binding
+plain-credentials
+ssh-credentials
+
+# Build tooling integrations
+config-file-provider
+sonar
+timestamper
+ws-cleanup
+
+# UI / usability
+blueocean
+matrix-auth

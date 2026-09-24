@@ -1,0 +1,46 @@
+# Jenkins stack (standalone) for DevOps-Project-01.
+#
+# Start:  docker compose up -d --build
+# Stop:   docker compose down          (data kept in the named volume)
+# Wipe:   docker compose down -v
+#
+# UI: http://localhost:8080   (admin / admin123 — change before non-local use)
+
+services:
+  jenkins:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dp01/jenkins:latest
+    container_name: dp01-jenkins
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    environment:
+      - JENKINS_ADMIN_ID=admin
+      - JENKINS_ADMIN_PASSWORD=admin123
+    # Allow the jenkins user to use the host Docker socket. Must match the GID
+    # of /var/run/docker.sock on the host (find it: stat -c '%g' /var/run/docker.sock).
+    group_add:
+      - "984"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - ../../:/workspace/DevOps-Project-01:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./init.groovy.d:/usr/share/jenkins/ref/init.groovy.d:ro
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+    networks:
+      - cicd
+
+# Shared external network so Jenkins can reach SonarQube/Artifactory by name.
+networks:
+  cicd:
+    name: dp01-cicd
+    external: true
+
+volumes:
+  jenkins_home:

@@ -1,0 +1,41 @@
+# Jenkins server for DevOps-Project-01 (local, Docker-based).
+#
+# Start:   docker compose up -d --build
+# Logs:    docker compose logs -f jenkins
+# Stop:    docker compose down            (data persisted in the named volume)
+# Wipe:    docker compose down -v         (also removes Jenkins data)
+
+services:
+  jenkins:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: devops-project-01/jenkins:latest
+    container_name: dp01-jenkins
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   # Jenkins web UI
+      - "50000:50000" # inbound agents
+    environment:
+      # Seed an admin user on first boot (setup wizard is disabled in the image).
+      # Change these before any non-local use.
+      - JENKINS_ADMIN_ID=admin
+      - JENKINS_ADMIN_PASSWORD=admin123
+    # Add the host's "docker" group so the jenkins user can use the mounted
+    # docker.sock. Set this to the GID of /var/run/docker.sock on your host
+    # (find it with: stat -c '%g' /var/run/docker.sock).
+    group_add:
+      - "984"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      # Mount the project so pipelines can be run/tested locally if desired.
+      - ../:/workspace/DevOps-Project-01:ro
+      # Give Jenkins access to the host Docker daemon (build/push images).
+      # SECURITY: this grants the container host-level Docker control. Fine for
+      # local learning; use a dedicated agent in production.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Seed groovy init script that creates the admin user from env vars.
+      - ./init.groovy.d:/usr/share/jenkins/ref/init.groovy.d:ro
+
+volumes:
+  jenkins_home:
