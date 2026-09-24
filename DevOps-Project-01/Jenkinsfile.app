@@ -70,7 +70,7 @@ pipeline {
         stage('Build & Test') {
             steps {
                 dir("${APP_DIR}") {
-                    sh './mvnw -B clean verify'
+                    sh 'mvn -B clean verify'
                 }
             }
             post {
@@ -87,7 +87,7 @@ pipeline {
                 withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
                     dir("${APP_DIR}") {
                         sh '''
-                            ./mvnw -B sonar:sonar \
+                            mvn -B sonar:sonar \
                               -Dsonar.host.url=${SONAR_HOST_URL} \
                               -Dsonar.token=${SONAR_TOKEN}
                         '''
@@ -106,7 +106,7 @@ pipeline {
                 )]) {
                     dir("${APP_DIR}") {
                         // Uses the env-var based settings.xml in cicd/jenkins/ (no secrets in file)
-                        sh './mvnw -B -s ../cicd/jenkins/settings.xml deploy -DskipTests'
+                        sh 'mvn -B -s ../cicd/jenkins/settings.xml deploy -DskipTests'
                     }
                 }
             }
