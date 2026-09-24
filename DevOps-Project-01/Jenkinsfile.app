@@ -90,8 +90,11 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
                     dir("${APP_DIR}") {
+                        // Scanner 3.9.x is the last line compiled for Java 11.
+                        // Newer scanners (3.10+/3.11) require Java 17+, but this
+                        // build runs on JDK 11, so pin a JDK-11-compatible scanner.
                         sh '''
-                            mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:3.11.0.3922:sonar \
+                            mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:3.9.1.2184:sonar \
                               -Dsonar.host.url=${SONAR_HOST_URL} \
                               -Dsonar.token=${SONAR_TOKEN} \
                               -Dsonar.projectKey=devops-project-01 \
