@@ -46,6 +46,24 @@ variable "db_password" {
   sensitive   = true
 }
 
+variable "db_sku_name" {
+  description = "MySQL Flexible Server SKU. Burstable (B_*) does not support HA. Use GP_*/MO_* when db_high_availability_enabled = true."
+  type        = string
+  default     = "B_Standard_B1ms"
+}
+
+variable "db_version" {
+  description = "MySQL engine version"
+  type        = string
+  default     = "8.0.21"
+}
+
+variable "db_high_availability_enabled" {
+  description = "Enable zone-redundant HA for MySQL. Requires a General Purpose or Business Critical SKU (not Burstable)."
+  type        = bool
+  default     = false
+}
+
 variable "vm_size" {
   description = "Azure VM size for scale set instances"
   type        = string

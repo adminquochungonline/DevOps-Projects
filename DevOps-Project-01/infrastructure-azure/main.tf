@@ -77,6 +77,16 @@ module "database" {
   db_name             = var.db_name
   db_username         = var.db_username
   db_password         = var.db_password
+
+  sku_name                  = var.db_sku_name
+  mysql_version             = var.db_version
+  high_availability_enabled = var.db_high_availability_enabled
+
+  # The Flexible Server requires the VNet-to-private-DNS-zone link to exist and
+  # propagate before creation. Referencing only the zone ID creates a dependency
+  # on the zone (fast) but not the link (~1 min), causing the intermittent
+  # VnetNotLinkedToPrivateDnsZone failure. Wait for the whole network module.
+  depends_on = [module.network]
 }
 
 # Application Gateway Module (replaces AWS ALB)

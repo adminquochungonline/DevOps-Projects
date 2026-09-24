@@ -11,9 +11,11 @@ resource "azurerm_mysql_flexible_server" "main" {
   administrator_login    = var.db_username
   administrator_password = var.db_password
 
-  # MySQL 8.0, general purpose, burstable SKU roughly matching db.t3.micro
-  version  = "8.0.21"
-  sku_name = "B_Standard_B1ms"
+  # MySQL 8.0. Burstable SKU (B_*) roughly matches db.t3.micro for dev.
+  # NOTE: Burstable tier does NOT support zone-redundant HA; use a General
+  # Purpose SKU (e.g. GP_Standard_D2ds_v4) if you enable high_availability.
+  version  = var.mysql_version
+  sku_name = var.sku_name
 
   # VNet integration: private access via delegated subnet + private DNS zone
   delegated_subnet_id = var.delegated_subnet_id
@@ -27,9 +29,13 @@ resource "azurerm_mysql_flexible_server" "main" {
   backup_retention_days        = 7
   geo_redundant_backup_enabled = false
 
-  # High availability across availability zones (Multi-AZ equivalent)
-  high_availability {
-    mode = "ZoneRedundant"
+  # High availability across availability zones (Multi-AZ equivalent).
+  # Only emitted when enabled, since Burstable SKUs reject HA outright.
+  dynamic "high_availability" {
+    for_each = var.high_availability_enabled ? [1] : []
+    content {
+      mode = "ZoneRedundant"
+    }
   }
 
   tags = {

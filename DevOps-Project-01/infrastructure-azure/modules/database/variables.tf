@@ -39,3 +39,21 @@ variable "db_password" {
   type        = string
   sensitive   = true
 }
+
+variable "mysql_version" {
+  description = "MySQL engine version"
+  type        = string
+  default     = "8.0.21"
+}
+
+variable "sku_name" {
+  description = "MySQL Flexible Server SKU. Burstable (B_*) does not support HA; use GP_* / MO_* for high_availability_enabled = true."
+  type        = string
+  default     = "B_Standard_B1ms"
+}
+
+variable "high_availability_enabled" {
+  description = "Enable zone-redundant HA. Requires a General Purpose or Business Critical SKU (not Burstable)."
+  type        = bool
+  default     = false
+}

@@ -38,6 +38,13 @@ resource "azurerm_application_gateway" "main" {
     capacity = 2
   }
 
+  # Azure rejects the implicit legacy default (AppGwSslPolicy20150501, TLS 1.0/1.1).
+  # Use a modern predefined policy that enforces TLS 1.2+.
+  ssl_policy {
+    policy_type = "Predefined"
+    policy_name = "AppGwSslPolicy20220101"
+  }
+
   gateway_ip_configuration {
     name      = "${var.environment}-appgw-ipcfg"
     subnet_id = var.public_subnet_id
