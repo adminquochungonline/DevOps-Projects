@@ -91,9 +91,11 @@ pipeline {
                 withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
                     dir("${APP_DIR}") {
                         sh '''
-                            mvn -B sonar:sonar \
+                            mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:3.11.0.3922:sonar \
                               -Dsonar.host.url=${SONAR_HOST_URL} \
-                              -Dsonar.token=${SONAR_TOKEN}
+                              -Dsonar.token=${SONAR_TOKEN} \
+                              -Dsonar.projectKey=devops-project-01 \
+                              -Dsonar.projectName=devops-project-01
                         '''
                     }
                 }
