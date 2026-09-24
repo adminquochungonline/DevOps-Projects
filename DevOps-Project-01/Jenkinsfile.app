@@ -146,6 +146,7 @@ pipeline {
                 withCredentials([
                     usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'AZ_CLIENT_ID', passwordVariable: 'AZ_CLIENT_SECRET'),
                     string(credentialsId: 'azure-tenant', variable: 'AZ_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'AZ_SUBSCRIPTION_ID'),
                     usernamePassword(credentialsId: 'jfrog-creds', usernameVariable: 'JFROG_USERNAME', passwordVariable: 'JFROG_PASSWORD'),
                     string(credentialsId: 'tf-db-username', variable: 'DB_USER'),
                     string(credentialsId: 'tf-db-password', variable: 'DB_PASS')
@@ -154,6 +155,7 @@ pipeline {
                         set -e
                         az login --service-principal \
                           -u "${AZ_CLIENT_ID}" -p "${AZ_CLIENT_SECRET}" --tenant "${AZ_TENANT_ID}" >/dev/null
+                        az account set --subscription "${AZ_SUBSCRIPTION_ID}"
 
                         RG="${ENVIRONMENT}-java-app-rg"
                         VMSS="${ENVIRONMENT}-vmss"
@@ -224,11 +226,13 @@ EOF
             steps {
                 withCredentials([
                     usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'AZ_CLIENT_ID', passwordVariable: 'AZ_CLIENT_SECRET'),
-                    string(credentialsId: 'azure-tenant', variable: 'AZ_TENANT_ID')
+                    string(credentialsId: 'azure-tenant', variable: 'AZ_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'AZ_SUBSCRIPTION_ID')
                 ]) {
                     sh '''
                         az login --service-principal \
                           -u "${AZ_CLIENT_ID}" -p "${AZ_CLIENT_SECRET}" --tenant "${AZ_TENANT_ID}" >/dev/null
+                        az account set --subscription "${AZ_SUBSCRIPTION_ID}"
 
                         RG="${ENVIRONMENT}-java-app-rg"
                         APPGW="${ENVIRONMENT}-appgw-pip"
