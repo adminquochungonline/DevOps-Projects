@@ -63,6 +63,8 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+                sh 'echo "--- workspace root ---"; ls -la'
+                sh 'echo "--- app dir ---"; ls -la "${APP_DIR}" || echo "APP_DIR khong ton tai: ${APP_DIR}"'
                 sh 'java -version && mvn -version'
             }
         }
