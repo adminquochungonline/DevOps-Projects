@@ -41,7 +41,7 @@ pipeline {
         )
         string(
             name: 'TFSTATE_STORAGE_ACCOUNT',
-            defaultValue: 'tfstatedp01hung',
+            defaultValue: 'hddevopsprojectstg001',
             description: 'Azure Storage account name holding the Terraform remote state (in resource group tfstate-rg, container tfstate).'
         )
         string(
