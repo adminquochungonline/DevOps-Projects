@@ -5,14 +5,32 @@
 # An autoscale profile scales on CPU utilization.
 
 locals {
-  # cloud-init user data: install Java 11 and Tomcat, enable and start service.
+  # cloud-init user data: install Java 11 + Tomcat, inject DB env vars, and
+  # (if a WAR URL is provided) download the app WAR as ROOT.war so it serves at "/".
   custom_data = base64encode(<<-EOF
     #!/bin/bash
     set -e
     apt-get update -y
-    apt-get install -y openjdk-11-jdk tomcat9
+    apt-get install -y openjdk-11-jdk tomcat9 curl
+
+    # Pass database settings to the app via Tomcat's environment (systemd drop-in).
+    mkdir -p /etc/systemd/system/tomcat9.service.d
+    cat > /etc/systemd/system/tomcat9.service.d/app-env.conf <<'ENVEOF'
+    [Service]
+    Environment=DB_URL=${var.db_url}
+    Environment=DB_USERNAME=${var.db_username}
+    Environment=DB_PASSWORD=${var.db_password}
+    ENVEOF
+
+    # Download the application WAR from Artifactory (if provided) as ROOT.war.
+    if [ -n "${var.war_url}" ]; then
+      curl -fsSL -u "${var.artifactory_username}:${var.artifactory_password}" \
+        -o /var/lib/tomcat9/webapps/ROOT.war "${var.war_url}" || echo "WAR download failed"
+    fi
+
+    systemctl daemon-reload
     systemctl enable tomcat9
-    systemctl start tomcat9
+    systemctl restart tomcat9
   EOF
   )
 }

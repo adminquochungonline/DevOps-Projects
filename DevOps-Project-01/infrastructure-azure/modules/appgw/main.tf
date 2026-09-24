@@ -77,7 +77,8 @@ resource "azurerm_application_gateway" "main" {
     unhealthy_threshold                       = 2
 
     match {
-      status_code = ["200"]
+      # Spring Boot app redirects "/" to the login page, so accept 3xx too.
+      status_code = ["200-399"]
     }
   }
 

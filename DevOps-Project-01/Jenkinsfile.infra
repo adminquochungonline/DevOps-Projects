@@ -39,6 +39,11 @@ pipeline {
             defaultValue: 'southeastasia',
             description: 'Azure region.'
         )
+        string(
+            name: 'WAR_URL',
+            defaultValue: '',
+            description: 'Optional: full Artifactory URL to the app WAR. If set, VMSS instances download it as ROOT.war on boot. Leave empty to skip app deploy.'
+        )
     }
 
     environment {
@@ -63,12 +68,14 @@ pipeline {
                     string(credentialsId: 'azure-subscription', variable: 'ARM_SUBSCRIPTION_ID'),
                     string(credentialsId: 'tf-db-username', variable: 'TF_VAR_db_username'),
                     string(credentialsId: 'tf-db-password', variable: 'TF_VAR_db_password'),
-                    string(credentialsId: 'vmss-ssh-pubkey', variable: 'TF_VAR_admin_ssh_public_key')
+                    string(credentialsId: 'vmss-ssh-pubkey', variable: 'TF_VAR_admin_ssh_public_key'),
+                    usernamePassword(credentialsId: 'jfrog-creds', usernameVariable: 'TF_VAR_artifactory_username', passwordVariable: 'TF_VAR_artifactory_password')
                 ]) {
                     dir("${INFRA_DIR}") {
                         sh '''
                             export TF_VAR_environment=${ENVIRONMENT}
                             export TF_VAR_location=${LOCATION}
+                            export TF_VAR_war_url=${WAR_URL}
                             terraform init -input=false
                             terraform validate
                             if [ "${TF_ACTION}" = "destroy" ]; then

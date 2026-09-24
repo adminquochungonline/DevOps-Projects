@@ -115,6 +115,15 @@ module "vmss" {
   instances                 = var.vmss_instances
   min_instances             = var.vmss_min_instances
   max_instances             = var.vmss_max_instances
+
+  # Application deployment: WAR pulled from Artifactory at boot + DB settings.
+  # DB URL/creds reuse the same values used to create the MySQL server.
+  war_url              = var.war_url
+  artifactory_username = var.artifactory_username
+  artifactory_password = var.artifactory_password
+  db_url               = "jdbc:mysql://${module.database.mysql_server_fqdn}:3306/${var.db_name}?useSSL=true&requireSSL=true"
+  db_username          = var.db_username
+  db_password          = var.db_password
 }
 
 # Monitoring Module (Log Analytics + Azure Monitor alerts)

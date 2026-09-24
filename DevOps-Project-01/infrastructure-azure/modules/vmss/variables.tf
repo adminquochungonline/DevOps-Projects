@@ -57,3 +57,45 @@ variable "max_instances" {
   description = "Maximum number of instances (autoscale)"
   type        = number
 }
+
+# --- Application deployment (WAR pulled from Artifactory at boot) ---
+
+variable "war_url" {
+  description = "Full URL to the application WAR in Artifactory. If empty, no app is deployed (Tomcat stays empty)."
+  type        = string
+  default     = ""
+}
+
+variable "artifactory_username" {
+  description = "Artifactory username used to download the WAR."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "artifactory_password" {
+  description = "Artifactory password/token used to download the WAR."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "db_url" {
+  description = "JDBC URL passed to the app (spring.datasource.url via DB_URL env)."
+  type        = string
+  default     = ""
+}
+
+variable "db_username" {
+  description = "Database username passed to the app (DB_USERNAME env)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "db_password" {
+  description = "Database password passed to the app (DB_PASSWORD env)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

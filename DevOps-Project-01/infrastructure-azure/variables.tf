@@ -104,3 +104,25 @@ variable "allowed_ssh_source_ranges" {
   type        = list(string)
   default     = ["0.0.0.0/0"] # WARNING: Restrict this in production
 }
+
+# --- Application deployment (optional; used to auto-deploy the WAR on VMSS) ---
+
+variable "war_url" {
+  description = "Full URL to the application WAR in Artifactory. Empty = don't deploy app (Tomcat stays empty)."
+  type        = string
+  default     = ""
+}
+
+variable "artifactory_username" {
+  description = "Artifactory username to download the WAR."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "artifactory_password" {
+  description = "Artifactory password/token to download the WAR."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
