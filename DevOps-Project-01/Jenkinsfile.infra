@@ -40,6 +40,11 @@ pipeline {
             description: 'Azure region.'
         )
         string(
+            name: 'TFSTATE_STORAGE_ACCOUNT',
+            defaultValue: 'tfstatedp01hung',
+            description: 'Azure Storage account name holding the Terraform remote state (in resource group tfstate-rg, container tfstate).'
+        )
+        string(
             name: 'WAR_URL',
             defaultValue: '',
             description: 'Optional: full Artifactory URL to the app WAR. If set, VMSS instances download it as ROOT.war on boot. Leave empty to skip app deploy.'
@@ -76,7 +81,9 @@ pipeline {
                             export TF_VAR_environment=${ENVIRONMENT}
                             export TF_VAR_location=${LOCATION}
                             export TF_VAR_war_url=${WAR_URL}
-                            terraform init -input=false
+                            # Backend auth uses the ARM_* env vars from the SP credential.
+                            terraform init -input=false -reconfigure \
+                              -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT}"
                             terraform validate
                             if [ "${TF_ACTION}" = "destroy" ]; then
                                 terraform plan -destroy -input=false -out=tfplan

@@ -14,14 +14,15 @@ terraform {
     }
   }
 
-  # Using local state (default). For a remote backend on Azure Storage,
-  # create the storage account/container first, then uncomment and fill:
-  # backend "azurerm" {
-  #   resource_group_name  = "tfstate-rg"
-  #   storage_account_name = "yourtfstateaccount"
-  #   container_name       = "tfstate"
-  #   key                  = "java-app/terraform.tfstate"
-  # }
+  # Remote state on Azure Storage. The storage account/container must exist
+  # before `terraform init`. Values (esp. storage_account_name) are provided at
+  # init time via -backend-config in the pipeline, so they are not hardcoded.
+  backend "azurerm" {
+    resource_group_name = "tfstate-rg"
+    container_name      = "tfstate"
+    key                 = "java-app/terraform.tfstate"
+    # storage_account_name is passed via -backend-config in Jenkinsfile.infra
+  }
 }
 
 provider "azurerm" {
