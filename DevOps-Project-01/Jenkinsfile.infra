@@ -81,6 +81,9 @@ pipeline {
                             export TF_VAR_environment=${ENVIRONMENT}
                             export TF_VAR_location=${LOCATION}
                             export TF_VAR_war_url=${WAR_URL}
+                            # Remove any stale local state / init so Terraform starts
+                            # fresh against the Azure Storage backend (no migration prompt).
+                            rm -rf .terraform .terraform.lock.hcl terraform.tfstate terraform.tfstate.backup
                             # Backend auth uses the ARM_* env vars from the SP credential.
                             terraform init -input=false -reconfigure \
                               -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT}"
