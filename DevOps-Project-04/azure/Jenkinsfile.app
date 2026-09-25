@@ -199,6 +199,57 @@ pipeline {
             }
         }
 
+        stage('Preflight: AcrPull') {
+            when { expression { return params.DEPLOY } }
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'AZ_CLIENT_ID', passwordVariable: 'AZ_CLIENT_SECRET'),
+                    string(credentialsId: 'azure-tenant', variable: 'AZ_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'AZ_SUBSCRIPTION_ID')
+                ]) {
+                    // Without AcrPull the revision fails minutes later inside an
+                    // Azure polling error. Check it here and say exactly what to fix.
+                    sh '''
+                        set -e
+                        az login --service-principal \
+                          -u "${AZ_CLIENT_ID}" -p "${AZ_CLIENT_SECRET}" --tenant "${AZ_TENANT_ID}" >/dev/null
+                        az account set --subscription "${AZ_SUBSCRIPTION_ID}"
+
+                        ENV_NAME="${ENVIRONMENT:-dev}"
+                        RG="${ENV_NAME}-django-app-rg"
+                        IDENTITY="${ENV_NAME}-django-app-identity"
+
+                        ACR_ID=$(az acr show -n "${REGISTRY_NAME}" --query id -o tsv)
+                        PRINCIPAL_ID=$(az identity show -g "${RG}" -n "${IDENTITY}" --query principalId -o tsv)
+                        echo "registry:  ${REGISTRY_NAME}"
+                        echo "identity:  ${IDENTITY} (principal ${PRINCIPAL_ID})"
+
+                        if az role assignment list --scope "${ACR_ID}" --include-inherited \
+                             --query "[?roleDefinitionName=='AcrPull'].principalId" -o tsv \
+                           | grep -qx "${PRINCIPAL_ID}"; then
+                            echo "AcrPull present."
+                            exit 0
+                        fi
+
+                        echo "ERROR: the container app identity has no AcrPull on the registry," >&2
+                        echo "so Container Apps cannot pull the image. Grant it with an account" >&2
+                        echo "holding Owner or User Access Administrator, then wait 2-5 minutes" >&2
+                        echo "for RBAC to propagate and re-run this job:" >&2
+                        echo >&2
+                        echo "  az role assignment create \\" >&2
+                        echo "    --assignee-object-id ${PRINCIPAL_ID} \\" >&2
+                        echo "    --assignee-principal-type ServicePrincipal \\" >&2
+                        echo "    --role AcrPull \\" >&2
+                        echo "    --scope ${ACR_ID}" >&2
+                        echo >&2
+                        echo "Or set MANAGE_ACR_PULL_ASSIGNMENT=true in both jobs to let Terraform" >&2
+                        echo "own the assignment (needs roleAssignments/write on the pipeline SP)." >&2
+                        exit 1
+                    '''
+                }
+            }
+        }
+
         stage('Approval to Deploy') {
             when { expression { return params.DEPLOY } }
             steps {
