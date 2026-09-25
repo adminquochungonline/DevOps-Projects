@@ -76,8 +76,10 @@ module "registry" {
   untagged_retention_days = var.acr_untagged_retention_days
 
   # Pull side: the container app identity. Push side: the CI service principal.
-  pull_principals   = { container_app = azurerm_user_assigned_identity.app.principal_id }
-  push_principal_id = var.cicd_principal_id
+  # Both are skipped when the deploying principal cannot write role assignments
+  # (see var.manage_acr_pull_assignment); grant them out-of-band in that case.
+  pull_principals   = var.manage_acr_pull_assignment ? { container_app = azurerm_user_assigned_identity.app.principal_id } : {}
+  push_principal_id = var.manage_acr_pull_assignment ? var.cicd_principal_id : ""
 
   tags = local.common_tags
 }

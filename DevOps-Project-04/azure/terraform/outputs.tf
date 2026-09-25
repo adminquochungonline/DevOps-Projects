@@ -28,6 +28,22 @@ output "managed_identity_client_id" {
   value       = azurerm_user_assigned_identity.app.client_id
 }
 
+output "managed_identity_principal_id" {
+  description = "Principal (object) ID of the workload identity. Use it to grant AcrPull by hand when manage_acr_pull_assignment = false."
+  value       = azurerm_user_assigned_identity.app.principal_id
+}
+
+output "acr_pull_grant_command" {
+  description = "Ready-to-run command that grants AcrPull out-of-band. Empty when Terraform manages the assignment itself."
+  value = var.manage_acr_pull_assignment ? "" : join(" ", [
+    "az role assignment create",
+    "--assignee-object-id ${azurerm_user_assigned_identity.app.principal_id}",
+    "--assignee-principal-type ServicePrincipal",
+    "--role AcrPull",
+    "--scope ${module.registry.registry_id}",
+  ])
+}
+
 output "container_app_name" {
   description = "Name of the container app (empty until an image is deployed)"
   value       = local.deploy_app ? module.container_app[0].container_app_name : ""

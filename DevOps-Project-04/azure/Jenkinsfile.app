@@ -68,6 +68,11 @@ pipeline {
             defaultValue: '',
             description: 'MUST match Jenkinsfile.infra, otherwise this apply removes the AcrPush assignment.'
         )
+        booleanParam(
+            name: 'MANAGE_ACR_PULL_ASSIGNMENT',
+            defaultValue: false,
+            description: 'MUST match Jenkinsfile.infra. true makes Terraform own the AcrPull assignment (needs roleAssignments/write); false leaves it to a manual grant.'
+        )
         string(
             name: 'IMAGE_TAG',
             defaultValue: '',
@@ -222,6 +227,7 @@ pipeline {
                             export TF_VAR_name_suffix=${NAME_SUFFIX}
                             export TF_VAR_alert_email=${ALERT_EMAIL}
                             export TF_VAR_cicd_principal_id=${CICD_PRINCIPAL_ID}
+                            export TF_VAR_manage_acr_pull_assignment=${MANAGE_ACR_PULL_ASSIGNMENT}
                             export TF_VAR_container_image=${IMAGE_REF}
                             export TF_VAR_allowed_hosts=${ALLOWED_HOSTS}
 

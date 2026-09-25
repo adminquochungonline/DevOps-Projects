@@ -41,6 +41,22 @@ variable "cicd_principal_id" {
   default     = ""
 }
 
+variable "manage_acr_pull_assignment" {
+  description = <<-EOT
+    Let Terraform create the AcrPull role assignment for the container app identity.
+
+    Requires the deploying principal to hold 'Microsoft.Authorization/roleAssignments/write'
+    (Owner, User Access Administrator, or Role Based Access Control Administrator).
+    A Contributor-only service principal gets 403 AuthorizationFailed.
+
+    Set to false to keep the assignment outside Terraform; grant it once by hand
+    with the principal ID from the managed_identity_principal_id output. The
+    container app cannot pull its image until that grant exists, however it is created.
+  EOT
+  type        = bool
+  default     = true
+}
+
 # --- Application image --------------------------------------------------------
 
 variable "container_image" {

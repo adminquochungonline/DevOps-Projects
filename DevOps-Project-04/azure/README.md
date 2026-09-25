@@ -178,7 +178,38 @@ Tên ACR được sinh theo quy ước `<ENVIRONMENT>django<NAME_SUFFIX>` (ví d
 
 ### Quyền cho service principal
 
-`az acr build` cần AcrPush. Nếu SP Jenkins chưa phải Contributor, lấy object ID rồi truyền vào cả hai job:
+Container app pull image bằng managed identity, nên **bắt buộc** phải có role `AcrPull` cho identity đó. Vấn đề: tạo role assignment cần quyền `Microsoft.Authorization/roleAssignments/write`, mà SP kiểu Contributor **không có** — apply sẽ dừng ở `403 AuthorizationFailed`.
+
+Chọn một trong hai cách, và giữ giá trị `MANAGE_ACR_PULL_ASSIGNMENT` **giống nhau ở cả hai job**:
+
+**Cách A — grant tay, SP giữ nguyên quyền Contributor** (mặc định, `MANAGE_ACR_PULL_ASSIGNMENT=false`):
+
+```bash
+cd DevOps-Project-04/azure/terraform
+terraform output -raw acr_pull_grant_command    # in ra lệnh đã điền sẵn ID
+# đăng nhập bằng account có Owner/UAA rồi chạy lệnh đó, ví dụ:
+az role assignment create \
+  --assignee-object-id <managed_identity_principal_id> \
+  --assignee-principal-type ServicePrincipal \
+  --role AcrPull \
+  --scope <registry_id>
+```
+
+Hệ quả: role assignment nằm ngoài Terraform, `terraform destroy` không xoá nó (nhưng xoá ACR thì assignment cũng mất theo).
+
+**Cách B — nâng quyền cho SP để Terraform tự quản** (`MANAGE_ACR_PULL_ASSIGNMENT=true`):
+
+```bash
+# chạy bằng account có Owner trên resource group/subscription
+az role assignment create \
+  --assignee <appId-của-SP> \
+  --role "Role Based Access Control Administrator" \
+  --scope /subscriptions/<sub-id>/resourceGroups/dev-django-app-rg
+```
+
+`Role Based Access Control Administrator` hẹp hơn `User Access Administrator` (chỉ gán được role, không đọc/ghi dữ liệu). Đợi 1-2 phút cho RBAC propagate rồi apply lại.
+
+Ngoài ra `az acr build` cần AcrPush. Nếu SP chưa phải Contributor thì lấy object ID rồi truyền vào cả hai job (chỉ có tác dụng khi `MANAGE_ACR_PULL_ASSIGNMENT=true`; nếu không thì grant tay tương tự cách A với role `AcrPush`):
 
 ```bash
 az ad sp show --id <appId> --query id -o tsv   # -> CICD_PRINCIPAL_ID

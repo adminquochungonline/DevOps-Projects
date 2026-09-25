@@ -63,6 +63,11 @@ pipeline {
             defaultValue: '',
             description: 'Optional: object ID of the Jenkins SP, granted AcrPush. Empty if the SP is already Contributor.'
         )
+        booleanParam(
+            name: 'MANAGE_ACR_PULL_ASSIGNMENT',
+            defaultValue: false,
+            description: 'Let Terraform create the AcrPull role assignment. Needs roleAssignments/write on the SP (Owner / User Access Administrator / RBAC Administrator) - a Contributor-only SP fails with 403. Leave false and grant AcrPull by hand using the acr_pull_grant_command output. MUST match the app job.'
+        )
     }
 
     environment {
@@ -93,6 +98,7 @@ pipeline {
                             export TF_VAR_name_suffix=${NAME_SUFFIX}
                             export TF_VAR_alert_email=${ALERT_EMAIL}
                             export TF_VAR_cicd_principal_id=${CICD_PRINCIPAL_ID}
+                            export TF_VAR_manage_acr_pull_assignment=${MANAGE_ACR_PULL_ASSIGNMENT}
                             # container_image stays empty here: platform only.
                             # The app pipeline owns the container app resource.
 
