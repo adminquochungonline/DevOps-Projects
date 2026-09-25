@@ -76,8 +76,8 @@ module "registry" {
   untagged_retention_days = var.acr_untagged_retention_days
 
   # Pull side: the container app identity. Push side: the CI service principal.
-  pull_principal_ids = [azurerm_user_assigned_identity.app.principal_id]
-  push_principal_id  = var.cicd_principal_id
+  pull_principals   = { container_app = azurerm_user_assigned_identity.app.principal_id }
+  push_principal_id = var.cicd_principal_id
 
   tags = local.common_tags
 }

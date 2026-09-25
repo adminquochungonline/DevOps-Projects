@@ -25,8 +25,11 @@ resource "azurerm_container_registry" "main" {
 }
 
 # Pull permission for the container app workload identity (least privilege).
+# Keyed by a static label, not by the principal ID: the identity is created in
+# the same run, so its principal ID is unknown at plan time and cannot be used
+# as a for_each key.
 resource "azurerm_role_assignment" "acr_pull" {
-  for_each = toset(var.pull_principal_ids)
+  for_each = var.pull_principals
 
   scope                = azurerm_container_registry.main.id
   role_definition_name = "AcrPull"

@@ -30,10 +30,10 @@ variable "untagged_retention_days" {
   default     = 7
 }
 
-variable "pull_principal_ids" {
-  description = "Principal object IDs granted AcrPull"
-  type        = list(string)
-  default     = []
+variable "pull_principals" {
+  description = "Principals granted AcrPull, as a map of static label => principal object ID. Keys must be known at plan time; values may be resolved at apply time."
+  type        = map(string)
+  default     = {}
 }
 
 variable "push_principal_id" {
