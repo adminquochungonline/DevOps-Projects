@@ -152,6 +152,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           ]
           probes: [
             {
+              // failureThreshold is capped at 10 by the Container Apps API, so
+              // the startup budget comes from the interval: 10 x 6s = 60s.
               type: 'Startup'
               httpGet: {
                 path: '/health/'
@@ -159,9 +161,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
                 scheme: 'HTTP'
               }
               initialDelaySeconds: 5
-              periodSeconds: 5
+              periodSeconds: 6
               timeoutSeconds: 3
-              failureThreshold: 12
+              failureThreshold: 10
             }
             {
               type: 'Readiness'

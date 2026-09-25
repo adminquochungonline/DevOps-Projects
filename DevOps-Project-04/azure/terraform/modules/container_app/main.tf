@@ -92,13 +92,15 @@ resource "azurerm_container_app" "main" {
       }
 
       # Startup: gives gunicorn time to boot before failures count.
+      # failure_count_threshold is capped at 10 by the Container Apps API, so the
+      # startup budget is stretched with the interval instead: 10 x 6s = 60s.
       startup_probe {
         transport               = "HTTP"
         port                    = var.target_port
         path                    = "/health/"
-        interval_seconds        = 5
+        interval_seconds        = 6
         timeout                 = 3
-        failure_count_threshold = 12
+        failure_count_threshold = 10
       }
 
       # Readiness: gates traffic during rolling revision switches.
