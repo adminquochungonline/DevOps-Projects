@@ -93,12 +93,15 @@ pipeline {
                 ]) {
                     dir("${INFRA_DIR}") {
                         sh '''
-                            export TF_VAR_environment=${ENVIRONMENT}
-                            export TF_VAR_location=${LOCATION}
-                            export TF_VAR_name_suffix=${NAME_SUFFIX}
-                            export TF_VAR_alert_email=${ALERT_EMAIL}
-                            export TF_VAR_cicd_principal_id=${CICD_PRINCIPAL_ID}
-                            export TF_VAR_manage_acr_pull_assignment=${MANAGE_ACR_PULL_ASSIGNMENT}
+                            # Defaults via ${VAR:-...} so a build triggered before
+                            # Jenkins picked up a newly added parameter still gets a
+                            # valid value instead of an empty string.
+                            export TF_VAR_environment="${ENVIRONMENT:-dev}"
+                            export TF_VAR_location="${LOCATION:-southeastasia}"
+                            export TF_VAR_name_suffix="${NAME_SUFFIX:-dp04hung}"
+                            export TF_VAR_alert_email="${ALERT_EMAIL:-}"
+                            export TF_VAR_cicd_principal_id="${CICD_PRINCIPAL_ID:-}"
+                            export TF_VAR_manage_acr_pull_assignment="${MANAGE_ACR_PULL_ASSIGNMENT:-false}"
                             # container_image stays empty here: platform only.
                             # The app pipeline owns the container app resource.
 

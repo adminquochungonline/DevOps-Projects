@@ -112,8 +112,13 @@ pipeline {
                 checkout scm
                 script {
                     def sha = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    // Fall back to the declared defaults: on the first build after a
+                    // parameter is added, Jenkins has not registered it yet and
+                    // params.X is null.
+                    def envName = (params.ENVIRONMENT ?: 'dev').trim()
+                    def suffix = (params.NAME_SUFFIX ?: 'dp04hung').trim()
                     env.RESOLVED_IMAGE_TAG = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : "${env.BUILD_NUMBER}-${sha}"
-                    env.REGISTRY_NAME = "${params.ENVIRONMENT}django${params.NAME_SUFFIX}"
+                    env.REGISTRY_NAME = "${envName}django${suffix}"
                     env.IMAGE_REF = "${env.REGISTRY_NAME}.azurecr.io/django-app:${env.RESOLVED_IMAGE_TAG}"
                     echo "Image to build: ${env.IMAGE_REF}"
                 }
@@ -222,14 +227,18 @@ pipeline {
                         // the only difference is container_image, which turns the
                         // container app on and pins the revision to this image.
                         sh '''
-                            export TF_VAR_environment=${ENVIRONMENT}
-                            export TF_VAR_location=${LOCATION}
-                            export TF_VAR_name_suffix=${NAME_SUFFIX}
-                            export TF_VAR_alert_email=${ALERT_EMAIL}
-                            export TF_VAR_cicd_principal_id=${CICD_PRINCIPAL_ID}
-                            export TF_VAR_manage_acr_pull_assignment=${MANAGE_ACR_PULL_ASSIGNMENT}
-                            export TF_VAR_container_image=${IMAGE_REF}
-                            export TF_VAR_allowed_hosts=${ALLOWED_HOSTS}
+                            # Defaults via ${VAR:-...} so a build triggered before
+                            # Jenkins picked up a newly added parameter still gets a
+                            # valid value. An empty allowed_hosts would make Django
+                            # reject every request with DisallowedHost.
+                            export TF_VAR_environment="${ENVIRONMENT:-dev}"
+                            export TF_VAR_location="${LOCATION:-southeastasia}"
+                            export TF_VAR_name_suffix="${NAME_SUFFIX:-dp04hung}"
+                            export TF_VAR_alert_email="${ALERT_EMAIL:-}"
+                            export TF_VAR_cicd_principal_id="${CICD_PRINCIPAL_ID:-}"
+                            export TF_VAR_manage_acr_pull_assignment="${MANAGE_ACR_PULL_ASSIGNMENT:-false}"
+                            export TF_VAR_container_image="${IMAGE_REF}"
+                            export TF_VAR_allowed_hosts="${ALLOWED_HOSTS:-*}"
 
                             rm -rf .terraform .terraform.lock.hcl terraform.tfstate terraform.tfstate.backup
                             terraform init -input=false -reconfigure \
