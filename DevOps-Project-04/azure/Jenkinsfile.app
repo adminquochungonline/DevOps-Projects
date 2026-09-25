@@ -278,11 +278,13 @@ pipeline {
                         // the only difference is container_image, which turns the
                         // container app on and pins the revision to this image.
                         sh '''
+                            set -e
                             # Defaults via ${VAR:-...} so a build triggered before
                             # Jenkins picked up a newly added parameter still gets a
                             # valid value. An empty allowed_hosts would make Django
                             # reject every request with DisallowedHost.
-                            export TF_VAR_environment="${ENVIRONMENT:-dev}"
+                            ENV_NAME="${ENVIRONMENT:-dev}"
+                            export TF_VAR_environment="${ENV_NAME}"
                             export TF_VAR_location="${LOCATION:-southeastasia}"
                             export TF_VAR_name_suffix="${NAME_SUFFIX:-dp04hung}"
                             export TF_VAR_alert_email="${ALERT_EMAIL:-}"
@@ -294,6 +296,26 @@ pipeline {
                             rm -rf .terraform .terraform.lock.hcl terraform.tfstate terraform.tfstate.backup
                             terraform init -input=false -reconfigure \
                               -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT}"
+
+                            # Self-heal an orphan: if a previous run created the
+                            # container app in Azure but failed while polling (for
+                            # example the revision could not pull its image), the
+                            # resource exists without being in state and every later
+                            # apply fails with "already exists". Import it instead.
+                            ADDR='module.container_app[0].azurerm_container_app.main'
+                            RG="${ENV_NAME}-django-app-rg"
+                            APP="${ENV_NAME}-django-app"
+                            if ! terraform state list | grep -qxF "${ADDR}"; then
+                                az login --service-principal \
+                                  -u "${ARM_CLIENT_ID}" -p "${ARM_CLIENT_SECRET}" --tenant "${ARM_TENANT_ID}" >/dev/null
+                                az account set --subscription "${ARM_SUBSCRIPTION_ID}"
+                                APP_ID=$(az containerapp show -g "${RG}" -n "${APP}" --query id -o tsv 2>/dev/null || true)
+                                if [ -n "${APP_ID}" ]; then
+                                    echo "Container app exists in Azure but not in state; importing before plan."
+                                    terraform import "${ADDR}" "${APP_ID}"
+                                fi
+                            fi
+
                             terraform plan -input=false -out=tfplan
                             terraform apply -input=false -auto-approve tfplan
                             echo "=== Outputs ==="

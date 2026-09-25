@@ -278,6 +278,15 @@ az containerapp ingress traffic set -g $RG -n $APP --revision-weight <revision-c
 
 Với track Terraform, rollback "đúng chuẩn" là chạy lại job app với `IMAGE_TAG` của bản cũ, để state và thực tế không lệch nhau.
 
+### Sự cố thường gặp
+
+| Triệu chứng | Nguyên nhân | Xử lý |
+|---|---|---|
+| `unable to pull image using Managed identity ... for registry` | Identity chưa có `AcrPull`, hoặc RBAC chưa propagate | Grant AcrPull (xem mục quyền SP) rồi chờ 2-5 phút. Stage `Preflight: AcrPull` của pipeline app sẽ chặn sớm trường hợp này |
+| `A resource with the ID ... already exists - to be managed via Terraform this resource needs to be imported` | Lần apply trước tạo được container app trên Azure nhưng fail ở bước polling (thường do lỗi pull image), nên resource không vào state | Pipeline app tự `terraform import` trước khi plan. Chạy tay thì: `terraform import 'module.container_app[0].azurerm_container_app.main' $(az containerapp show -g dev-django-app-rg -n dev-django-app --query id -o tsv)`, hoặc `az containerapp delete` rồi apply lại |
+| `Authenticating using the Azure CLI is only supported as a User` | Chạy lệnh Terraform ngoài `withCredentials`, provider rơi xuống CLI auth trong khi session CLI là service principal | Đảm bảo `ARM_CLIENT_ID/ARM_CLIENT_SECRET/ARM_TENANT_ID/ARM_SUBSCRIPTION_ID` có mặt ở mọi stage chạy Terraform, kể cả stage chỉ đọc output |
+| `Invalid value for input variable ... a bool is required` | Build được trigger trước khi Jenkins đăng ký parameter mới, biến rỗng | Đã xử lý bằng fallback `${VAR:-default}`; chạy lại job là hết |
+
 ## Bảo mật
 
 - Ingress đang **public và không có authentication** (đúng như ALB ở bản AWS). Trước khi dùng thật: bật Container Apps authentication (Entra ID), hoặc đặt Front Door/Application Gateway + WAF phía trước, hoặc `external_ingress = false` nếu chỉ phục vụ nội bộ.
