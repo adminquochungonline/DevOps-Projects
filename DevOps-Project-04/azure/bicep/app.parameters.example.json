@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "prefix": {
+      "value": "devops04"
+    },
+    "location": {
+      "value": "southeastasia"
+    },
+    "environmentId": {
+      "value": "<output environmentId of platform.bicep>"
+    },
+    "managedIdentityId": {
+      "value": "<output identityId of platform.bicep>"
+    },
+    "registryLoginServer": {
+      "value": "<output registryLoginServer of platform.bicep>"
+    },
+    "containerImage": {
+      "value": "<registry>.azurecr.io/django-app:1.0.0"
+    },
+    "allowedHosts": {
+      "value": "*"
+    },
+    "csrfTrustedOrigins": {
+      "value": ""
+    },
+    "minReplicas": {
+      "value": 1
+    },
+    "maxReplicas": {
+      "value": 10
+    }
+  }
+}

@@ -1,0 +1,176 @@
+// Infrastructure pipeline for DevOps-Project-04 (Azure).
+// Provisions the platform layer with Terraform (azure/terraform): container
+// registry, Log Analytics, workload identity and the Container Apps environment.
+// Flow: init/validate -> plan -> MANUAL APPROVAL -> apply (or destroy).
+//
+// This pipeline deliberately stops short of the container app itself: the
+// registry holds no image yet on a first run. Jenkinsfile.app builds the image
+// and then applies the same Terraform config with container_image set, which
+// creates/updates the container app.
+//
+// Reuses the DevOps-Project-01 CI/CD environment as-is (dp01/jenkins image with
+// Terraform 1.9.8 + Azure CLI, state in the same Azure Storage account under a
+// different key).
+//
+// Required Jenkins credentials:
+//   azure-sp           (Username with password)  -> Service Principal appId/password
+//   azure-tenant       (Secret text)             -> Azure tenant ID
+//   azure-subscription (Secret text)             -> Azure subscription ID
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 45, unit: 'MINUTES')
+    }
+
+    parameters {
+        choice(
+            name: 'TF_ACTION',
+            choices: ['plan-only', 'apply', 'destroy'],
+            description: 'Terraform action. "apply"/"destroy" pause for approval after the plan.'
+        )
+        string(
+            name: 'ENVIRONMENT',
+            defaultValue: 'dev',
+            description: 'Target environment (matches the Terraform environment/name prefix).'
+        )
+        string(
+            name: 'LOCATION',
+            defaultValue: 'southeastasia',
+            description: 'Azure region.'
+        )
+        string(
+            name: 'NAME_SUFFIX',
+            defaultValue: 'dp04hung',
+            description: 'Globally-unique suffix; the registry is named "<ENVIRONMENT>django<NAME_SUFFIX>".'
+        )
+        string(
+            name: 'TFSTATE_STORAGE_ACCOUNT',
+            defaultValue: 'hddevopsprojectstg001',
+            description: 'Azure Storage account holding the Terraform remote state (resource group tfstate-rg, container tfstate).'
+        )
+        string(
+            name: 'ALERT_EMAIL',
+            defaultValue: '',
+            description: 'Optional: email for Azure Monitor alerts. Empty disables alerting.'
+        )
+        string(
+            name: 'CICD_PRINCIPAL_ID',
+            defaultValue: '',
+            description: 'Optional: object ID of the Jenkins SP, granted AcrPush. Empty if the SP is already Contributor.'
+        )
+    }
+
+    environment {
+        // Path relative to the repo root; this project lives in a subfolder.
+        INFRA_DIR = 'DevOps-Project-04/azure/terraform'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh 'terraform version'
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET'),
+                    string(credentialsId: 'azure-tenant', variable: 'ARM_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'ARM_SUBSCRIPTION_ID')
+                ]) {
+                    dir("${INFRA_DIR}") {
+                        sh '''
+                            export TF_VAR_environment=${ENVIRONMENT}
+                            export TF_VAR_location=${LOCATION}
+                            export TF_VAR_name_suffix=${NAME_SUFFIX}
+                            export TF_VAR_alert_email=${ALERT_EMAIL}
+                            export TF_VAR_cicd_principal_id=${CICD_PRINCIPAL_ID}
+                            # container_image stays empty here: platform only.
+                            # The app pipeline owns the container app resource.
+
+                            # Remove any stale local state / init so Terraform starts
+                            # fresh against the Azure Storage backend (no migration prompt).
+                            rm -rf .terraform .terraform.lock.hcl terraform.tfstate terraform.tfstate.backup
+                            # Backend auth uses the ARM_* env vars from the SP credential.
+                            terraform init -input=false -reconfigure \
+                              -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT}"
+                            terraform validate
+                            if [ "${TF_ACTION}" = "destroy" ]; then
+                                terraform plan -destroy -input=false -out=tfplan
+                            else
+                                terraform plan -input=false -out=tfplan
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Approval') {
+            when {
+                expression { return params.TF_ACTION == 'apply' || params.TF_ACTION == 'destroy' }
+            }
+            steps {
+                script {
+                    timeout(time: 30, unit: 'MINUTES') {
+                        input(
+                            message: "Review the Terraform plan above. Proceed with '${params.TF_ACTION}' on '${params.ENVIRONMENT}'?",
+                            ok: "Yes, ${params.TF_ACTION}"
+                        )
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            when {
+                expression { return params.TF_ACTION == 'apply' || params.TF_ACTION == 'destroy' }
+            }
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET'),
+                    string(credentialsId: 'azure-tenant', variable: 'ARM_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'ARM_SUBSCRIPTION_ID')
+                ]) {
+                    dir("${INFRA_DIR}") {
+                        // tfplan already encodes apply-or-destroy from the plan stage
+                        sh 'terraform apply -input=false -auto-approve tfplan'
+                    }
+                }
+            }
+        }
+
+        stage('Output') {
+            when { expression { return params.TF_ACTION == 'apply' } }
+            steps {
+                dir("${INFRA_DIR}") {
+                    sh '''
+                        echo "=== Infrastructure outputs ==="
+                        terraform output || true
+                        echo
+                        echo "Next: run Jenkinsfile.app to build the image and deploy the container app."
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Infrastructure pipeline completed ('${params.TF_ACTION}') for '${params.ENVIRONMENT}'."
+        }
+        failure {
+            echo 'Infrastructure pipeline failed. Check the stage logs above.'
+        }
+        // NOTE: do not cleanWs() here. Keeping the workspace avoids a full
+        // re-init on every run; state itself lives in Azure Storage.
+    }
+}

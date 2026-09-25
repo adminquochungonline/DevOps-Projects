@@ -4,6 +4,18 @@
 
 **This comprehensive guide demonstrates how to deploy a Django-based production application onto AWS using ECS (Elastic Container Service) and ECR (Elastic Container Registry). We'll cover the complete DevOps pipeline from containerization to deployment, including security best practices, monitoring setup, and production optimization.**
 
+> ### ☁️ Deployment variants
+>
+> The same Django app ships with two independent, side-by-side deployments:
+>
+> | Cloud | Target | Where |
+> | ----- | ------ | ----- |
+> | **AWS** | ECS Fargate + ECR + ALB | this document, plus `Dockerfile` |
+> | **Azure** | Container Apps + ACR, via **Bicep** or **Terraform + Jenkins** | [`azure/README.md`](azure/README.md) |
+>
+> Neither variant shares configuration with the other; the Django source
+> (`manage.py`, `hello_world_django_app/`) is the only common part.
+
 ## 📋 Table of Contents
 
 - [Overview](#overview)

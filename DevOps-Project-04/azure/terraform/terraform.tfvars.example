@@ -1,0 +1,37 @@
+# Example variables for a local (non-Jenkins) run.
+# Copy to terraform.tfvars and adjust. Do NOT put django_secret_key here for
+# anything real: pass it via TF_VAR_django_secret_key from a secret store.
+
+environment = "dev"
+location    = "southeastasia"
+
+# Must be globally unique: the registry name becomes "<environment>django<name_suffix>".
+name_suffix = "dp04hung"
+
+acr_sku = "Basic"
+# acr_untagged_retention_days = 7   # Premium SKU only
+
+# Phase 1 (platform only): leave container_image empty.
+# Phase 2 (deploy the app): set it to the image pushed by the app pipeline.
+container_image = ""
+# container_image = "devdjangodp04hung.azurecr.io/django-app:42"
+
+# Narrow this to the ingress FQDN after the first deploy.
+allowed_hosts        = "*"
+csrf_trusted_origins = ""
+
+min_replicas        = 1
+max_replicas        = 10
+concurrent_requests = 50
+
+container_cpu    = 0.5
+container_memory = "1Gi"
+
+log_retention_in_days = 30
+
+# Empty disables the action group and both metric alerts.
+alert_email = ""
+
+# Object ID of the Jenkins service principal, to grant it AcrPush.
+# az ad sp show --id <appId> --query id -o tsv
+cicd_principal_id = ""
