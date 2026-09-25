@@ -160,13 +160,29 @@ pipeline {
         stage('Output') {
             when { expression { return params.TF_ACTION == 'apply' } }
             steps {
-                dir("${INFRA_DIR}") {
-                    sh '''
-                        echo "=== Infrastructure outputs ==="
-                        terraform output || true
-                        echo
-                        echo "Next: run Jenkinsfile.app to build the image and deploy the container app."
-                    '''
+                // ARM_* must be present here too: reading outputs means reading
+                // remote state. Without them Terraform falls back to Azure CLI
+                // auth, which the provider rejects for service principals.
+                withCredentials([
+                    usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET'),
+                    string(credentialsId: 'azure-tenant', variable: 'ARM_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'ARM_SUBSCRIPTION_ID')
+                ]) {
+                    dir("${INFRA_DIR}") {
+                        sh '''
+                            echo "=== Infrastructure outputs ==="
+                            terraform output
+                            echo
+                            if [ "${MANAGE_ACR_PULL_ASSIGNMENT:-false}" != "true" ]; then
+                                echo "AcrPull is NOT managed by Terraform. Grant it once with the command in"
+                                echo "the acr_pull_grant_command output above, using an account that holds"
+                                echo "Owner or User Access Administrator. The container app cannot pull its"
+                                echo "image until that grant exists."
+                                echo
+                            fi
+                            echo "Next: run DevOps-Project-04-azure-app to build the image and deploy the container app."
+                        '''
+                    }
                 }
             }
         }
