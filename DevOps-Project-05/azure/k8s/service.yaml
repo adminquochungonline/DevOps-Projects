@@ -1,0 +1,23 @@
+# AKS version of ../../hello-world/regapp-service.yml.
+# Public Azure Load Balancer on port 80 -> Tomcat 8080: http://<EXTERNAL-IP>/webapp/
+# SECURITY: this is internet-facing with no authentication (same as the
+# original manifest). Restrict loadBalancerSourceRanges or put an ingress/WAF
+# in front before real use.
+apiVersion: v1
+kind: Service
+metadata:
+  name: regapp
+  namespace: regapp
+  labels:
+    app: regapp
+spec:
+  type: LoadBalancer
+  selector:
+    app: regapp
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  # Uncomment to allow only specific client IPs:
+  # loadBalancerSourceRanges:
+  #   - 203.0.113.10/32

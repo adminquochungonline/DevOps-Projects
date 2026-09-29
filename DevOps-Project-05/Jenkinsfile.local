@@ -1,0 +1,210 @@
+// Local pipeline for DevOps-Project-05 (regapp: Java WAR on Tomcat in Docker).
+// Automates README steps 6-8 on the local machine instead of an EC2 Docker host:
+// the Jenkins container drives the host Docker daemon through the mounted
+// /var/run/docker.sock, so no SSH / "Publish Over SSH" hop is needed.
+//
+// Flow: maven build & test -> [sonar] -> docker build -> replace container
+//       -> smoke test (auto-rollback to the previous image on failure).
+//
+// Uses the DevOps-Project-01 CI/CD environment as-is:
+//   * dp01/jenkins image (JDK 11 at /opt/java/jdk-11, Maven, Docker CLI)
+//   * SonarQube at http://dp01-sonarqube:9000 on the dp01-cicd network
+// The app container joins dp01-cicd too, so the smoke test reaches it by
+// container name; it is also published on the host at http://localhost:<HOST_PORT>/webapp/.
+//
+// Required Jenkins credentials:
+//   sonarqube-token (Secret text) -> only when RUN_SONAR = true
+//
+// Job: "Pipeline script from SCM", Script Path: DevOps-Project-05/Jenkinsfile.local
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    parameters {
+        booleanParam(
+            name: 'RUN_SONAR',
+            defaultValue: true,
+            description: 'Run the SonarQube analysis (project key devops-project-05).'
+        )
+        string(
+            name: 'HOST_PORT',
+            defaultValue: '8087',
+            description: 'Host port for the app (8080 is taken by Jenkins). URL: http://localhost:<HOST_PORT>/webapp/'
+        )
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: '',
+            description: 'Image tag. Empty = "<BUILD_NUMBER>-<short git sha>".'
+        )
+    }
+
+    environment {
+        // The app targets Java 1.7 bytecode: JDK 11 still compiles it, JDK 21 does not.
+        JAVA_HOME = '/opt/java/jdk-11'
+        PATH      = "/opt/java/jdk-11/bin:${env.PATH}"
+
+        // Paths relative to the repo root; this project lives in a subfolder.
+        PROJECT_DIR = 'DevOps-Project-05'
+        APP_DIR     = 'DevOps-Project-05/hello-world'
+
+        IMAGE_NAME     = 'dp05/regapp'
+        CONTAINER_NAME = 'dp05-regapp'
+        CICD_NETWORK   = 'dp01-cicd'
+        SONAR_HOST_URL = 'http://dp01-sonarqube:9000'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    def sha = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.RESOLVED_IMAGE_TAG = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : "${env.BUILD_NUMBER}-${sha}"
+                    env.IMAGE_REF = "${env.IMAGE_NAME}:${env.RESOLVED_IMAGE_TAG}"
+                    // Fallback: on the first build after a parameter is added,
+                    // Jenkins has not registered it yet and params.X is null.
+                    env.RESOLVED_HOST_PORT = (params.HOST_PORT ?: '8087').trim()
+                    echo "Image to build: ${env.IMAGE_REF}"
+                }
+                sh 'java -version && mvn -version && docker version --format "docker {{.Server.Version}}"'
+            }
+        }
+
+        stage('Build & Test (Maven)') {
+            steps {
+                dir("${APP_DIR}") {
+                    sh 'mvn -B clean verify'
+                }
+            }
+            post {
+                always {
+                    junit testResults: "${APP_DIR}/**/target/surefire-reports/*.xml", allowEmptyResults: true
+                    archiveArtifacts artifacts: "${APP_DIR}/webapp/target/webapp.war", fingerprint: true, allowEmptyArchive: true
+                }
+            }
+        }
+
+        stage('Code Quality (SonarQube)') {
+            when { expression { return params.RUN_SONAR } }
+            steps {
+                withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+                    dir("${APP_DIR}") {
+                        // The scanner needs Java 17+, so it runs on the Jenkins
+                        // JDK 21 while the code is still analyzed as JDK 11.
+                        withEnv(['JAVA_HOME=/opt/java/openjdk', 'PATH+JDK21=/opt/java/openjdk/bin']) {
+                            sh '''
+                                mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:3.11.0.3922:sonar \
+                                  -Dsonar.host.url=${SONAR_HOST_URL} \
+                                  -Dsonar.token=${SONAR_TOKEN} \
+                                  -Dsonar.projectKey=devops-project-05 \
+                                  -Dsonar.projectName=devops-project-05 \
+                                  -Dsonar.java.jdkHome=/opt/java/jdk-11
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Build Image (Docker)') {
+            steps {
+                dir("${PROJECT_DIR}") {
+                    // The docker CLI streams the context from the Jenkins
+                    // container to the host daemon; .dockerignore keeps it to
+                    // the Dockerfile + WAR.
+                    sh 'docker build --pull -f docker/Dockerfile -t "${IMAGE_REF}" .'
+                }
+            }
+        }
+
+        stage('Deploy (local container)') {
+            steps {
+                sh '''
+                    set -e
+                    # Remember what is running now so a failed smoke test can roll back.
+                    PREV_IMAGE=$(docker inspect --format '{{.Config.Image}}' "${CONTAINER_NAME}" 2>/dev/null || true)
+                    echo "${PREV_IMAGE}" > "${WORKSPACE}/prev_image.txt"
+                    echo "Currently running: ${PREV_IMAGE:-<none>}"
+
+                    docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+                    docker run -d \
+                      --name "${CONTAINER_NAME}" \
+                      --restart unless-stopped \
+                      --network "${CICD_NETWORK}" \
+                      -p "${RESOLVED_HOST_PORT}:8080" \
+                      --memory 512m \
+                      --label project=devops-project-05 \
+                      "${IMAGE_REF}"
+                '''
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                sh '''
+                    URL="http://${CONTAINER_NAME}:8080/webapp/"
+                    echo "Smoke testing ${URL}"
+                    for i in $(seq 1 20); do
+                        body=$(curl -s --max-time 5 "${URL}" || true)
+                        if echo "${body}" | grep -q "New user Register"; then
+                            echo "Smoke test passed: http://localhost:${RESOLVED_HOST_PORT}/webapp/"
+                            exit 0
+                        fi
+                        echo "attempt ${i}: not ready yet"
+                        sleep 3
+                    done
+
+                    echo "Smoke test failed. Container logs:"
+                    docker logs --tail 100 "${CONTAINER_NAME}" || true
+
+                    PREV_IMAGE=$(cat "${WORKSPACE}/prev_image.txt" 2>/dev/null || true)
+                    if [ -n "${PREV_IMAGE}" ] && [ "${PREV_IMAGE}" != "${IMAGE_REF}" ]; then
+                        echo "Rolling back to ${PREV_IMAGE}"
+                        docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+                        docker run -d \
+                          --name "${CONTAINER_NAME}" \
+                          --restart unless-stopped \
+                          --network "${CICD_NETWORK}" \
+                          -p "${RESOLVED_HOST_PORT}:8080" \
+                          --memory 512m \
+                          --label project=devops-project-05 \
+                          "${PREV_IMAGE}"
+                    fi
+                    exit 1
+                '''
+            }
+        }
+
+        stage('Prune Old Images') {
+            steps {
+                // Keep the 5 newest regapp tags: enough history for the
+                // auto-rollback and for a manual `docker run` of an older build.
+                sh '''
+                    docker images "${IMAGE_NAME}" --format '{{.CreatedAt}}\t{{.Repository}}:{{.Tag}}' \
+                      | sort -r | tail -n +6 | cut -f2 \
+                      | xargs -r docker rmi >/dev/null 2>&1 || true
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Deployed ${env.IMAGE_REF} -> http://localhost:${env.RESOLVED_HOST_PORT}/webapp/"
+        }
+        failure {
+            echo 'Local pipeline failed. Check the stage logs above.'
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

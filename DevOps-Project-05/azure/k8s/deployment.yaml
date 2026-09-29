@@ -1,0 +1,70 @@
+# AKS version of ../../hello-world/regapp-deploy.yml.
+# __IMAGE__ is replaced by Jenkinsfile.app with <acr>.azurecr.io/regapp:<tag>
+# (never :latest, so every rollout is traceable and `kubectl rollout undo` works).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: regapp
+  namespace: regapp
+  labels:
+    app: regapp
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: regapp
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0   # keep full capacity during a rollout
+  template:
+    metadata:
+      labels:
+        app: regapp
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: regapp
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          # Tomcat needs a few seconds to unpack the WAR; startupProbe holds
+          # the other probes back until the app answers once.
+          startupProbe:
+            httpGet:
+              path: /webapp/
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /webapp/
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /webapp/
+              port: http
+            periodSeconds: 20
+            failureThreshold: 3

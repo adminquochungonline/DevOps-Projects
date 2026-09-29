@@ -1,0 +1,22 @@
+# Example variables for a manual (non-Jenkins) run:
+#   cp terraform.tfvars.example terraform.tfvars
+#   terraform init -backend-config="storage_account_name=hddevopsprojectstg001"
+#   terraform apply
+
+environment = "dev"
+location    = "southeastasia"
+
+# Must be globally unique: the registry becomes "<environment>regapp<name_suffix>".
+name_suffix = "dp05hung"
+
+acr_sku = "Basic"
+
+# Leave empty for the region default.
+kubernetes_version = ""
+aks_sku_tier       = "Free"
+
+node_vm_size = "Standard_B2s" # Standard_D2as_v5 if B-series is restricted
+node_count   = 1
+
+# false = grant AcrPull by hand with the acr_pull_grant_command output.
+manage_acr_pull_assignment = true

@@ -1,0 +1,5 @@
+# Build context for docker/Dockerfile is DevOps-Project-05/.
+# Send only what the image needs (also keeps `az acr build` uploads tiny).
+*
+!docker/Dockerfile
+!hello-world/webapp/target/webapp.war

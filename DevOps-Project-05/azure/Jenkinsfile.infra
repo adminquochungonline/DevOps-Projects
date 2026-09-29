@@ -1,0 +1,197 @@
+// Infrastructure pipeline for DevOps-Project-05 (Azure).
+// Provisions the platform with Terraform (azure/terraform): resource group,
+// Azure Container Registry, AKS cluster and the kubelet AcrPull grant.
+// Flow: init/validate -> plan -> MANUAL APPROVAL -> apply (or destroy).
+//
+// Run this BEFORE azure/Jenkinsfile.app, which builds the image into this ACR
+// and deploys azure/k8s/*.yaml to this cluster.
+//
+// Reuses the DevOps-Project-01 CI/CD environment as-is (dp01/jenkins image with
+// Terraform 1.9.8 + Azure CLI; state in the same Azure Storage account under
+// the key regapp-aks/terraform.tfstate).
+//
+// Required Jenkins credentials:
+//   azure-sp           (Username with password)  -> Service Principal appId/password
+//   azure-tenant       (Secret text)             -> Azure tenant ID
+//   azure-subscription (Secret text)             -> Azure subscription ID
+//
+// Job: "Pipeline script from SCM", Script Path: DevOps-Project-05/azure/Jenkinsfile.infra
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        // AKS create/delete alone can take 10-15 minutes.
+        timeout(time: 60, unit: 'MINUTES')
+    }
+
+    parameters {
+        choice(
+            name: 'TF_ACTION',
+            choices: ['plan-only', 'apply', 'destroy'],
+            description: 'Terraform action. "apply"/"destroy" pause for approval after the plan.'
+        )
+        string(
+            name: 'ENVIRONMENT',
+            defaultValue: 'dev',
+            description: 'Environment / name prefix. MUST match Jenkinsfile.app.'
+        )
+        string(
+            name: 'LOCATION',
+            defaultValue: 'southeastasia',
+            description: 'Azure region.'
+        )
+        string(
+            name: 'NAME_SUFFIX',
+            defaultValue: 'dp05hung',
+            description: 'Globally-unique suffix; registry = "<ENVIRONMENT>regapp<NAME_SUFFIX>". MUST match Jenkinsfile.app.'
+        )
+        string(
+            name: 'NODE_VM_SIZE',
+            defaultValue: 'Standard_B2s',
+            description: 'AKS node VM size (>= 2 vCPU / 4 GiB). Use Standard_D2as_v5 if B-series is restricted in the region.'
+        )
+        string(
+            name: 'NODE_COUNT',
+            defaultValue: '1',
+            description: 'Number of AKS nodes (1-5).'
+        )
+        booleanParam(
+            name: 'MANAGE_ACR_PULL_ASSIGNMENT',
+            defaultValue: true,
+            description: 'Let Terraform grant AcrPull to the AKS kubelet identity. Needs the SP to hold Role Based Access Control Administrator (constrained to AcrPull is enough). false = grant by hand with the acr_pull_grant_command output.'
+        )
+        string(
+            name: 'TFSTATE_STORAGE_ACCOUNT',
+            defaultValue: 'hddevopsprojectstg001',
+            description: 'Azure Storage account holding the Terraform remote state (resource group tfstate-rg, container tfstate).'
+        )
+    }
+
+    environment {
+        // Path relative to the repo root; this project lives in a subfolder.
+        INFRA_DIR = 'DevOps-Project-05/azure/terraform'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh 'terraform version'
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET'),
+                    string(credentialsId: 'azure-tenant', variable: 'ARM_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'ARM_SUBSCRIPTION_ID')
+                ]) {
+                    dir("${INFRA_DIR}") {
+                        sh '''
+                            set -e
+                            # ${VAR:-default}: a build started before Jenkins registered
+                            # a newly added parameter still gets a valid value.
+                            export TF_VAR_environment="${ENVIRONMENT:-dev}"
+                            export TF_VAR_location="${LOCATION:-southeastasia}"
+                            export TF_VAR_name_suffix="${NAME_SUFFIX:-dp05hung}"
+                            export TF_VAR_node_vm_size="${NODE_VM_SIZE:-Standard_B2s}"
+                            export TF_VAR_node_count="${NODE_COUNT:-1}"
+                            export TF_VAR_manage_acr_pull_assignment="${MANAGE_ACR_PULL_ASSIGNMENT:-true}"
+
+                            # Start clean against the Azure Storage backend (no
+                            # migration prompt from a stale local state/init).
+                            rm -rf .terraform .terraform.lock.hcl terraform.tfstate terraform.tfstate.backup
+                            # Backend and provider auth both use the ARM_* env vars.
+                            terraform init -input=false -reconfigure \
+                              -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT:-hddevopsprojectstg001}"
+                            terraform validate
+                            if [ "${TF_ACTION}" = "destroy" ]; then
+                                terraform plan -destroy -input=false -out=tfplan
+                            else
+                                terraform plan -input=false -out=tfplan
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Approval') {
+            when {
+                expression { return params.TF_ACTION == 'apply' || params.TF_ACTION == 'destroy' }
+            }
+            steps {
+                script {
+                    timeout(time: 30, unit: 'MINUTES') {
+                        input(
+                            message: "Review the Terraform plan above. Proceed with '${params.TF_ACTION}' on '${params.ENVIRONMENT}'?",
+                            ok: "Yes, ${params.TF_ACTION}"
+                        )
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            when {
+                expression { return params.TF_ACTION == 'apply' || params.TF_ACTION == 'destroy' }
+            }
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET'),
+                    string(credentialsId: 'azure-tenant', variable: 'ARM_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'ARM_SUBSCRIPTION_ID')
+                ]) {
+                    dir("${INFRA_DIR}") {
+                        // tfplan already encodes apply-or-destroy from the plan stage.
+                        sh 'terraform apply -input=false -auto-approve tfplan'
+                    }
+                }
+            }
+        }
+
+        stage('Output') {
+            when { expression { return params.TF_ACTION == 'apply' } }
+            steps {
+                // ARM_* needed here too: reading outputs reads remote state.
+                withCredentials([
+                    usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET'),
+                    string(credentialsId: 'azure-tenant', variable: 'ARM_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'ARM_SUBSCRIPTION_ID')
+                ]) {
+                    dir("${INFRA_DIR}") {
+                        sh '''
+                            echo "=== Infrastructure outputs ==="
+                            terraform output
+                            echo
+                            if [ "${MANAGE_ACR_PULL_ASSIGNMENT:-true}" != "true" ]; then
+                                echo "AcrPull is NOT managed by Terraform. Run the acr_pull_grant_command output"
+                                echo "above with an Owner / User Access Administrator account, otherwise the"
+                                echo "pods end in ImagePullBackOff."
+                                echo
+                            fi
+                            echo "Next: run the dp05-azure-app job to build the image and deploy to AKS."
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Infrastructure pipeline completed ('${params.TF_ACTION}') for '${params.ENVIRONMENT}'."
+        }
+        failure {
+            echo 'Infrastructure pipeline failed. Check the stage logs above.'
+        }
+        // No cleanWs(): state lives in Azure Storage; keeping the workspace
+        // only saves a provider download on the next run.
+    }
+}
