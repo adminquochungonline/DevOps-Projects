@@ -61,12 +61,12 @@ pipeline {
         string(
             name: 'CICD_PRINCIPAL_ID',
             defaultValue: '',
-            description: 'Optional: object ID of the Jenkins SP, granted AcrPush. Empty if the SP is already Contributor.'
+            description: 'Optional: object ID of the Jenkins SP, granted AcrPush. Leave EMPTY: az acr build already works with Contributor, and an RBAC Administrator role constrained to AcrPull cannot assign AcrPush (403).'
         )
         booleanParam(
             name: 'MANAGE_ACR_PULL_ASSIGNMENT',
-            defaultValue: false,
-            description: 'Let Terraform create the AcrPull role assignment. Needs roleAssignments/write on the SP (Owner / User Access Administrator / RBAC Administrator) - a Contributor-only SP fails with 403. Leave false and grant AcrPull by hand using the acr_pull_grant_command output. MUST match the app job.'
+            defaultValue: true,
+            description: 'Let Terraform create the AcrPull role assignment for the container app identity. Needs the SP to hold Role Based Access Control Administrator (constrained to AcrPull is enough). false = grant AcrPull by hand with the acr_pull_grant_command output. MUST match the app job.'
         )
     }
 
@@ -101,7 +101,7 @@ pipeline {
                             export TF_VAR_name_suffix="${NAME_SUFFIX:-dp04hung}"
                             export TF_VAR_alert_email="${ALERT_EMAIL:-}"
                             export TF_VAR_cicd_principal_id="${CICD_PRINCIPAL_ID:-}"
-                            export TF_VAR_manage_acr_pull_assignment="${MANAGE_ACR_PULL_ASSIGNMENT:-false}"
+                            export TF_VAR_manage_acr_pull_assignment="${MANAGE_ACR_PULL_ASSIGNMENT:-true}"
                             # container_image stays empty here: platform only.
                             # The app pipeline owns the container app resource.
 
@@ -173,7 +173,7 @@ pipeline {
                             echo "=== Infrastructure outputs ==="
                             terraform output
                             echo
-                            if [ "${MANAGE_ACR_PULL_ASSIGNMENT:-false}" != "true" ]; then
+                            if [ "${MANAGE_ACR_PULL_ASSIGNMENT:-true}" != "true" ]; then
                                 echo "AcrPull is NOT managed by Terraform. Grant it once with the command in"
                                 echo "the acr_pull_grant_command output above, using an account that holds"
                                 echo "Owner or User Access Administrator. The container app cannot pull its"

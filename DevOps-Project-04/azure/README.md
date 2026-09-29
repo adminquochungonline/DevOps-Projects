@@ -178,42 +178,32 @@ Tên ACR được sinh theo quy ước `<ENVIRONMENT>django<NAME_SUFFIX>` (ví d
 
 ### Quyền cho service principal
 
-Container app pull image bằng managed identity, nên **bắt buộc** phải có role `AcrPull` cho identity đó. Vấn đề: tạo role assignment cần quyền `Microsoft.Authorization/roleAssignments/write`, mà SP kiểu Contributor **không có** — apply sẽ dừng ở `403 AuthorizationFailed`.
+Container app pull image bằng managed identity, nên identity đó **bắt buộc** phải có role `AcrPull` trên registry. Tạo role assignment cần quyền `Microsoft.Authorization/roleAssignments/write`, mà Contributor **không có**. Nếu chỉ có Contributor, apply sẽ dừng ở lỗi `403 AuthorizationFailed`.
 
-Chọn một trong hai cách, và giữ giá trị `MANAGE_ACR_PULL_ASSIGNMENT` **giống nhau ở cả hai job**:
+Giữ giá trị `MANAGE_ACR_PULL_ASSIGNMENT` **giống nhau ở cả hai job**.
 
-**Cách A — grant tay, SP giữ nguyên quyền Contributor** (mặc định, `MANAGE_ACR_PULL_ASSIGNMENT=false`):
+**Mặc định: Terraform tự quản AcrPull** (`MANAGE_ACR_PULL_ASSIGNMENT=true`)
+
+Cấp cho SP của Jenkins role **Role Based Access Control Administrator có điều kiện**, chỉ cho phép gán AcrPull. Làm một lần bằng account Owner:
+
+1. Subscription → **Access control (IAM)** → Add role assignment
+2. Role: **Role Based Access Control Administrator**
+3. Members: SP của credential `azure-sp`
+4. Tab **Conditions** → *Allow user to only assign selected roles to selected principals* → chỉ chọn **AcrPull**
+
+Chờ 2–5 phút cho RBAC có hiệu lực. Từ đó Terraform tự gán AcrPull, kể cả khi identity bị tạo lại và nhận principal ID mới. Khi destroy, Terraform cũng tự xoá assignment này.
+
+Để trống `CICD_PRINCIPAL_ID`: `az acr build` đã chạy được với quyền Contributor, và điều kiện ở trên chặn việc gán AcrPush (sẽ báo 403).
+
+**Dự phòng: grant tay** (`MANAGE_ACR_PULL_ASSIGNMENT=false`), dùng khi không thể cấp thêm quyền cho SP:
 
 ```bash
 cd DevOps-Project-04/azure/terraform
-terraform output -raw acr_pull_grant_command    # in ra lệnh đã điền sẵn ID
-# đăng nhập bằng account có Owner/UAA rồi chạy lệnh đó, ví dụ:
-az role assignment create \
-  --assignee-object-id <managed_identity_principal_id> \
-  --assignee-principal-type ServicePrincipal \
-  --role AcrPull \
-  --scope <registry_id>
+terraform output -raw acr_pull_grant_command    # in ra lệnh đã điền sẵn principal ID và scope
+# chạy lệnh đó bằng account có Owner hoặc User Access Administrator
 ```
 
-Hệ quả: role assignment nằm ngoài Terraform, `terraform destroy` không xoá nó (nhưng xoá ACR thì assignment cũng mất theo).
-
-**Cách B — nâng quyền cho SP để Terraform tự quản** (`MANAGE_ACR_PULL_ASSIGNMENT=true`):
-
-```bash
-# chạy bằng account có Owner trên resource group/subscription
-az role assignment create \
-  --assignee <appId-của-SP> \
-  --role "Role Based Access Control Administrator" \
-  --scope /subscriptions/<sub-id>/resourceGroups/dev-django-app-rg
-```
-
-`Role Based Access Control Administrator` hẹp hơn `User Access Administrator` (chỉ gán được role, không đọc/ghi dữ liệu). Đợi 1-2 phút cho RBAC propagate rồi apply lại.
-
-Ngoài ra `az acr build` cần AcrPush. Nếu SP chưa phải Contributor thì lấy object ID rồi truyền vào cả hai job (chỉ có tác dụng khi `MANAGE_ACR_PULL_ASSIGNMENT=true`; nếu không thì grant tay tương tự cách A với role `AcrPush`):
-
-```bash
-az ad sp show --id <appId> --query id -o tsv   # -> CICD_PRINCIPAL_ID
-```
+Mỗi lần identity bị tạo lại thì phải grant lại, vì quyền gắn với principal ID. Stage `Preflight: AcrPull` của job app sẽ báo khi thiếu.
 
 ### Chạy Terraform tay (không qua Jenkins)
 

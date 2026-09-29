@@ -66,12 +66,12 @@ pipeline {
         string(
             name: 'CICD_PRINCIPAL_ID',
             defaultValue: '',
-            description: 'MUST match Jenkinsfile.infra, otherwise this apply removes the AcrPush assignment.'
+            description: 'MUST match Jenkinsfile.infra (normally empty), otherwise this apply adds/removes the AcrPush assignment.'
         )
         booleanParam(
             name: 'MANAGE_ACR_PULL_ASSIGNMENT',
-            defaultValue: false,
-            description: 'MUST match Jenkinsfile.infra. true makes Terraform own the AcrPull assignment (needs roleAssignments/write); false leaves it to a manual grant.'
+            defaultValue: true,
+            description: 'MUST match Jenkinsfile.infra. true makes Terraform own the AcrPull assignment (SP needs RBAC Administrator, constrained to AcrPull is enough); false leaves it to a manual grant.'
         )
         string(
             name: 'IMAGE_TAG',
@@ -231,6 +231,14 @@ pipeline {
                             exit 0
                         fi
 
+                        if [ "${MANAGE_ACR_PULL_ASSIGNMENT:-true}" = "true" ]; then
+                            echo "ERROR: the container app identity (principal ${PRINCIPAL_ID}) has no AcrPull" >&2
+                            echo "on ${REGISTRY_NAME}. MANAGE_ACR_PULL_ASSIGNMENT=true, so Terraform owns it:" >&2
+                            echo "run DevOps-Project-04-azure-infra with TF_ACTION=apply and the same" >&2
+                            echo "parameters, wait 2-5 minutes for RBAC to propagate, then re-run this job." >&2
+                            exit 1
+                        fi
+
                         echo "ERROR: the container app identity has no AcrPull on the registry," >&2
                         echo "so Container Apps cannot pull the image. Grant it with an account" >&2
                         echo "holding Owner or User Access Administrator, then wait 2-5 minutes" >&2
@@ -290,7 +298,7 @@ pipeline {
                             export TF_VAR_name_suffix="${NAME_SUFFIX:-dp04hung}"
                             export TF_VAR_alert_email="${ALERT_EMAIL:-}"
                             export TF_VAR_cicd_principal_id="${CICD_PRINCIPAL_ID:-}"
-                            export TF_VAR_manage_acr_pull_assignment="${MANAGE_ACR_PULL_ASSIGNMENT:-false}"
+                            export TF_VAR_manage_acr_pull_assignment="${MANAGE_ACR_PULL_ASSIGNMENT:-true}"
                             export TF_VAR_container_image="${IMAGE_REF}"
                             export TF_VAR_allowed_hosts="${ALLOWED_HOSTS:-*}"
 
