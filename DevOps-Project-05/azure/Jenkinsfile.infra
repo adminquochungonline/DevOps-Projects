@@ -176,7 +176,7 @@ pipeline {
                                 echo "pods end in ImagePullBackOff."
                                 echo
                             fi
-                            echo "Next: run the dp05-azure-app job to build the image and deploy to AKS."
+                            echo "Next: run the DevOps-Project-05-azure-app job to build the image and deploy to AKS."
                         '''
                     }
                 }

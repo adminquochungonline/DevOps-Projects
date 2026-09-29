@@ -160,7 +160,7 @@ pipeline {
                         az account set --subscription "${AZ_SUBSCRIPTION_ID}"
 
                         if ! az acr show -n "${REGISTRY_NAME}" --query id -o tsv >/dev/null 2>&1; then
-                            echo "ERROR: registry ${REGISTRY_NAME} not found. Run dp05-azure-infra (TF_ACTION=apply)" >&2
+                            echo "ERROR: registry ${REGISTRY_NAME} not found. Run DevOps-Project-05-azure-infra (TF_ACTION=apply)" >&2
                             echo "with the same ENVIRONMENT / NAME_SUFFIX first." >&2
                             exit 1
                         fi
@@ -193,7 +193,7 @@ pipeline {
 
                         STATE=$(az aks show -g "${RESOURCE_GROUP}" -n "${AKS_NAME}" --query provisioningState -o tsv 2>/dev/null || true)
                         if [ "${STATE}" != "Succeeded" ]; then
-                            echo "ERROR: AKS cluster ${AKS_NAME} is '${STATE:-missing}'. Run dp05-azure-infra (TF_ACTION=apply) first." >&2
+                            echo "ERROR: AKS cluster ${AKS_NAME} is '${STATE:-missing}'. Run DevOps-Project-05-azure-infra (TF_ACTION=apply) first." >&2
                             exit 1
                         fi
 
@@ -210,7 +210,7 @@ pipeline {
                         fi
 
                         echo "ERROR: the AKS kubelet identity has no AcrPull on ${REGISTRY_NAME}." >&2
-                        echo "Either re-run dp05-azure-infra with MANAGE_ACR_PULL_ASSIGNMENT=true, or grant it" >&2
+                        echo "Either re-run DevOps-Project-05-azure-infra with MANAGE_ACR_PULL_ASSIGNMENT=true, or grant it" >&2
                         echo "with an Owner / User Access Administrator account, wait 2-5 minutes, re-run:" >&2
                         echo >&2
                         echo "  az role assignment create --assignee-object-id ${KUBELET_ID} --assignee-principal-type ServicePrincipal --role AcrPull --scope ${ACR_ID}" >&2
