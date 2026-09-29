@@ -236,11 +236,12 @@ pipeline {
                         echo "holding Owner or User Access Administrator, then wait 2-5 minutes" >&2
                         echo "for RBAC to propagate and re-run this job:" >&2
                         echo >&2
-                        echo "  az role assignment create \\" >&2
-                        echo "    --assignee-object-id ${PRINCIPAL_ID} \\" >&2
-                        echo "    --assignee-principal-type ServicePrincipal \\" >&2
-                        echo "    --role AcrPull \\" >&2
-                        echo "    --scope ${ACR_ID}" >&2
+                        # One line on purpose: Groovy collapses double backslashes in this
+                        # string, so shell line continuations here would break the quoting.
+                        echo "  az role assignment create --assignee-object-id ${PRINCIPAL_ID} --assignee-principal-type ServicePrincipal --role AcrPull --scope ${ACR_ID}" >&2
+                        echo >&2
+                        echo "Note: the principal ID changes whenever the identity is recreated" >&2
+                        echo "(e.g. after a destroy/apply). A grant made for an older ID does not carry over." >&2
                         echo >&2
                         echo "Or set MANAGE_ACR_PULL_ASSIGNMENT=true in both jobs to let Terraform" >&2
                         echo "own the assignment (needs roleAssignments/write on the pipeline SP)." >&2
