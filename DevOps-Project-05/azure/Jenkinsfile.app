@@ -330,8 +330,17 @@ pipeline {
                     for i in $(seq 1 12); do
                         body=$(curl -s --max-time 10 "${APP_URL}" || true)
                         if echo "${body}" | grep -q "New user Register"; then
-                            echo "Smoke test passed: ${APP_URL}"
-                            exit 0
+                            # Submit the registration form end-to-end too.
+                            reg=$(curl -s --max-time 10 \
+                              -d Name=Jenkins -d mobile=0912345678 -d email=smoke@example.com \
+                              -d psw=smoke-test-123 -d psw-repeat=smoke-test-123 \
+                              "${APP_URL}register.jsp" || true)
+                            if echo "${reg}" | grep -q "Registration successful"; then
+                                echo "Smoke test passed (form + register): ${APP_URL}"
+                                exit 0
+                            fi
+                            echo "Form page is up but POST register.jsp did not succeed."
+                            break
                         fi
                         echo "attempt ${i}: not ready yet"
                         sleep 10

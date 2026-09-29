@@ -23,9 +23,11 @@ RUN groupadd --system --gid 10001 tomcat \
     && useradd --system --uid 10001 --gid tomcat \
          --home-dir /usr/local/tomcat --shell /usr/sbin/nologin tomcat \
     && rm -rf /usr/local/tomcat/webapps/* \
+    && mkdir -p /usr/local/tomcat/conf/Catalina/localhost \
     && chown -R tomcat:tomcat \
          /usr/local/tomcat/webapps /usr/local/tomcat/work \
-         /usr/local/tomcat/temp /usr/local/tomcat/logs
+         /usr/local/tomcat/temp /usr/local/tomcat/logs \
+         /usr/local/tomcat/conf/Catalina
 
 # Served under /webapp/, same URL as in the README.
 COPY --chown=tomcat:tomcat hello-world/webapp/target/webapp.war /usr/local/tomcat/webapps/webapp.war
