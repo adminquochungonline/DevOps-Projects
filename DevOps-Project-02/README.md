@@ -1,83 +1,57 @@
-# Deploy Scalable VPC Architecture on AWS Cloud
+# DevOps Project 02 — AWS and Azure Deployments
 
-![AWS-Cloud](https://imgur.com/AXD50yl.png)
+Project này duy trì **hai phiên bản triển khai song song** cho cùng một website và cùng concept kiến trúc. Artifact AWS gốc được giữ nguyên; phiên bản Azure là một implementation bổ sung, không thay thế AWS.
 
-### TABLE OF CONTENTS
+## Chọn nền tảng
 
-1. [Goal](https://github.com/NotHarshhaa/DevOps-Projects/blob/master/DevOps-Project-02/README.md#goal)
-2. [Pre-Requisites](https://github.com/NotHarshhaa/DevOps-Projects/blob/master/DevOps-Project-02/README.md#pre-requisites)
-3. [Pre-Deployment](https://github.com/NotHarshhaa/DevOps-Projects/blob/master/DevOps-Project-02/README.md#pre-deployment)
-4. [VPC Deployment](https://github.com/NotHarshhaa/DevOps-Projects/blob/master/DevOps-Project-02/README.md#vpc-deployment)
-5. [Validation](https://github.com/NotHarshhaa/DevOps-Projects/blob/master/DevOps-Project-02/README.md#validation)
+| Nền tảng | Tài liệu | Infrastructure artifacts |
+|---|---|---|
+| AWS | [AWS deployment guide](./VPC%20Architecture/README.md) | [`VPC Architecture/`](./VPC%20Architecture/) |
+| Azure | [Azure deployment guide](./Azure%20Architecture/README.md) | [`Azure Architecture/`](./Azure%20Architecture/) |
 
-## Goal
+Source website dùng chung: [`html-web-app/`](./html-web-app/).
 
-Deploy a Modular and Scalable Virtual Network Architecture with Amazon VPC.
+## Concept chung
 
-## Pre-Requisites
+Cả hai phiên bản đều giữ cùng luồng triển khai:
 
-1. You must be having an [AWS account](https://aws.amazon.com/) to create infrastructure resources on AWS cloud.
-2. [Source Code](https://github.com/NotHarshhaa/DevOps-Projects/blob/master/DevOps-Project-02/html-web-app)
+```text
+Golden machine image
+→ Management/Bastion network tách biệt
+→ Private application compute đa zone
+→ Controlled outbound qua NAT
+→ Public Layer 7 load balancer
+→ Auto scaling từ 2 đến 4 instances
+→ Object storage với least-privilege identity
+→ DNS
+→ Centralized logs, metrics và network flow logs
+```
 
-## Pre-Deployment
+## Cấu trúc
 
-Customize the application dependencies mentioned below on AWS EC2 instance and create the Golden AMI.
+```text
+DevOps-Project-02/
+├── README.md
+├── VPC Architecture/          # Phiên bản AWS gốc
+│   ├── README.md
+│   ├── script.sh
+│   ├── flow-logs.json
+│   ├── flow-logs-trusted.json
+│   ├── memory_metrics.json
+│   └── s3-policy.json
+├── Azure Architecture/        # Phiên bản Azure bổ sung
+│   ├── README.md
+│   ├── bootstrap.sh
+│   ├── main.bicep
+│   ├── flow-logs.bicep
+│   ├── flow-logs.module.bicep
+│   └── main.parameters.example.json
+└── html-web-app/              # Website dùng chung
+```
 
-1. AWS CLI
-2. Install Apache Web Server
-3. Install Git
-4. Cloudwatch Agent
-5. Push custom memory metrics to Cloudwatch.
-6. AWS SSM Agent
+## Lưu ý
 
-## VPC Deployment
-
-1. Build VPC network ( 192.168.0.0/16 ) for Bastion Host deployment as per the architecture shown above.
-2. Build VPC network ( 172.32.0.0/16 ) for deploying Highly Available and Auto Scalable application servers as per the architecture shown above.
-3. Create NAT Gateway in Public Subnet and update Private Subnet associated Route Table accordingly to route the default traffic to NAT for outbound internet connection.
-4. Create Transit Gateway and associate both VPCs to the Transit Gateway  for private communication.
-5. Create Internet Gateway for each VPC and Public Subnet associated Route Table accordingly to route the default traffic to IGW for inbound/outbound internet connection.
-6. Create Cloudwatch Log Group with two Log Streams to store the VPC Flow Logs of both VPCs.
-7. Enable Flow Logs for both VPCs and push the Flow Logs to Cloudwatch Log Groups and store the logs in the respective Log Stream for each VPC.
-8. Create Security Group for bastion host allowing port 22 from public.
-9. Deploy Bastion Host EC2 instance in the Public Subnet with EIP associated.
-10. Create S3 Bucket to store application specific configuration.
-11. Create Launch Template with below configuration (replacing deprecated Launch Configuration).
-    1. Golden AMI
-    2. Instance Type – t3.micro (updated from t2.micro for better performance)
-    3. Userdata to pull the code from Git Repository to document root folder of webserver and start the httpd service.
-    4. IAM Role granting access to Session Manager and to S3 bucket created in the previous step to pull the configuration. (Do not grant S3 Full Access)
-    5. Security Group allowing port 22 from Bastion Host and Port 80 from Public.
-    6. Key Pair
-12. Create Auto Scaling Group with Min: 2 Max: 4 with two Private Subnets associated to multiple AZs for high availability.
-13. Create Target Group and associate it with ASG.
-14. Create Application Load Balancer (ALB) in Public Subnets for better layer 7 routing and add Target Group as target.
-15. Update route53 hosted zone with CNAME record routing the traffic to ALB.
-
-## Validation
-
-1. As DevOps Engineer login to Private Instances via Bastion Host.
-2. Login to AWS Session Manager and access the EC2 shell from console.
-3. Browse web application from public internet browser using domain name and verify that page loaded.
-
-## 🛠️ Author & Community  
-
-This project is crafted by **[Harshhaa](https://github.com/NotHarshhaa)** 💡.  
-I’d love to hear your feedback! Feel free to share your thoughts.  
-
-📧 **Connect with me:**
-
-- **GitHub**: [@NotHarshhaa](https://github.com/NotHarshhaa)  
-- **Blog**: [ProDevOpsGuy](https://blog.prodevopsguytech.com)  
-- **Telegram Community**: [Join Here](https://t.me/prodevopsguy)  
-- **LinkedIn**: [Harshhaa Vardhan Reddy](https://www.linkedin.com/in/harshhaa-vardhan-reddy/)  
-
----
-
-## ⭐ Support the Project  
-
-If you found this helpful, consider **starring** ⭐ the repository and sharing it with your network! 🚀  
-
-### 📢 Stay Connected  
-
-![Follow Me](https://imgur.com/2j7GSPs.png)
+- Chạy AWS theo hướng dẫn trong `VPC Architecture/README.md`.
+- Chạy Azure theo hướng dẫn trong `Azure Architecture/README.md`.
+- Không chạy đồng thời hai stack nếu không cần thiết vì cả hai đều phát sinh chi phí cloud.
+- Các policy và script trong `VPC Architecture` được giữ lại để triển khai, học tập và so sánh với Azure.

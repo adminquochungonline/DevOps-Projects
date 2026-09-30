@@ -1,0 +1,6 @@
+# Local Azure deployment parameters may contain environment-specific values.
+Azure Architecture/main.parameters.json
+
+# Generated ARM templates; Bicep files are the source of truth.
+Azure Architecture/main.json
+Azure Architecture/flow-logs.json

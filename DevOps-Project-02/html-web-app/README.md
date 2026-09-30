@@ -1,45 +1,18 @@
-**Edit a file, create a new file, and clone from Bitbucket in under 2 minutes**
+# DevOps Project 02 Web Application
 
-When you're done, you can delete the content in this README and update the file with details for others getting started with your repository.
+Static website dùng chung cho cả hai phiên bản triển khai AWS và Azure của Project 02.
 
-*We recommend that you open this README in another tab as you perform the tasks below. You can [watch our video](https://youtu.be/0ocf7u76WSo) for a full demo of all the steps in this tutorial. Open the video in a new tab to avoid leaving Bitbucket.*
+## Nội dung
 
----
+- `index.html`, `header.html`, `ok.htm`, `error.htm`: các trang HTML hiện có.
+- `css/`, `js/`, `images/`: asset của website.
+- `WEB-INF/web.xml`: artifact servlet cũ; project hiện không chứa servlet implementation hoặc Java runtime tương ứng.
 
-## Edit a file
+## Deployment entrypoints
 
-You'll start by editing this README file to learn how to edit a file in GitHub.
+- AWS: `../VPC Architecture/script.sh` và hướng dẫn trong `../VPC Architecture/README.md`.
+- Azure: `../Azure Architecture/bootstrap.sh` và hướng dẫn trong `../Azure Architecture/README.md`.
 
-1. Click **Source** on the left side.
-2. Click the README.md link from the list of files.
-3. Click the **Edit** button.
-4. Delete the following text: *Delete this line to make a change to the README from GitHub.*
-5. After making your change, click **Commit** and then **Commit** again in the dialog. The commit page will open and you'll see the change you just made.
-6. Go back to the **Source** page.
+Azure bootstrap clone repository và copy toàn bộ thư mục này vào `/var/www/html`, sau đó tạo `/healthz` cho Application Gateway health probe. AWS script được giữ nguyên hành vi gốc để phục vụ triển khai và so sánh.
 
----
-
-## Create a file
-
-Next, you'll add a new file to this repository.
-
-1. Click the **New file** button at the top of the **Source** page.
-2. Give the file a filename of **contributors.txt**.
-3. Enter your name in the empty file space.
-4. Click **Commit** and then **Commit** again in the dialog.
-5. Go back to the **Source** page.
-
-Before you move on, go ahead and explore the repository. You've already seen the **Source** page, but check out the **Commits**, **Branches**, and **Settings** pages.
-
----
-
-## Clone a repository
-
-Use these steps to clone from SourceTree, our client for using the repository command-line free. Cloning allows you to work on your files locally. If you don't yet have SourceTree, [download and install first](https://www.sourcetreeapp.com/). If you prefer to clone from the command line, see [Clone a repository](https://confluence.atlassian.com/x/4whODQ).
-
-1. You'll see the clone button under the **Source** heading. Click that button.
-2. Now click **Check out in SourceTree**. You may need to create a SourceTree account or log in.
-3. When you see the **Clone New** dialog in SourceTree, update the destination path and name if you like to and then click **Clone**.
-4. Open the directory you just created to see your repository files.
-
-Now that you're more familiar with your GitHub repository, go ahead and add a new file locally. You can [push your change back to GitHub with SourceTree](https://confluence.atlassian.com/x/iqyBMg), or you can [add, commit,](https://confluence.atlassian.com/x/8QhODQ) and [push from the command line](https://confluence.atlassian.com/x/NQ0zDQ).
+Website hiện có các link tới trang phụ và `contact.php` không tồn tại trong repository. Chúng được giữ nguyên vì nằm ngoài phạm vi chuyển đổi hạ tầng cloud.

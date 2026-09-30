@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "southeastasia"
+    },
+    "prefix": {
+      "value": "devops02"
+    },
+    "adminUsername": {
+      "value": "azureadmin"
+    },
+    "sshPublicKey": {
+      "value": "ssh-ed25519 REPLACE_WITH_YOUR_PUBLIC_KEY"
+    },
+    "galleryImageVersionId": {
+      "value": "/subscriptions/REPLACE_SUBSCRIPTION_ID/resourceGroups/REPLACE_IMAGE_RG/providers/Microsoft.Compute/galleries/REPLACE_GALLERY/images/ubuntu-apache/versions/1.0.0"
+    },
+    "vmSku": {
+      "value": "Standard_B1ms"
+    },
+    "availabilityZones": {
+      "value": [
+        "1",
+        "2",
+        "3"
+      ]
+    },
+    "siteRepositoryUrl": {
+      "value": "https://github.com/adminquochungonline/DevOps-Projects.git"
+    },
+    "siteRepositoryRef": {
+      "value": "master"
+    },
+    "dnsZoneName": {
+      "value": ""
+    }
+  }
+}
