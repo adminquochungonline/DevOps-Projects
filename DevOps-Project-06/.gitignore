@@ -1,1 +1,5 @@
-./target/*
+target/
+.azure/
+.kube/
+.k8s-rendered/
+app_url.txt

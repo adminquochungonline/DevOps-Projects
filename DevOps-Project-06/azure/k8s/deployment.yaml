@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sample-app-dep
+  name: sample-app
   namespace: sample-app
   labels:
     app: sample-app
@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: sample-app
-        image: acrdevops06app.azurecr.io/sample_app:2.1.2
+        image: __IMAGE__
         imagePullPolicy: Always
         ports:
         - containerPort: 8000
@@ -32,11 +32,11 @@ spec:
           value: "zBThlZDEp8qnu7NwwdHNth8eg3Rf9zqbvUEFUTaZtN2SF"
         resources:
           requests:
-            cpu: 250m
-            memory: 512Mi
+            cpu: 100m
+            memory: 256Mi
           limits:
             cpu: 500m
-            memory: 1024Mi
+            memory: 512Mi
         livenessProbe:
           tcpSocket:
             port: 8000
