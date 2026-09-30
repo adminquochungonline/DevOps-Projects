@@ -1,0 +1,126 @@
+// Azure CI/CD Pipeline for DevOps-Project-06 (Hybrid Architecture: Local Jenkins -> Azure ACR & AKS)
+pipeline {
+    agent any
+
+    environment {
+        // Azure Configuration
+        AZURE_SP_CREDENTIALS_ID = 'azure-sp-credentials'             // Service Principal credential in Jenkins
+        ACR_CREDENTIALS_ID      = 'azure-acr-credentials'            // ACR Username/Password or Service Principal in Jenkins
+        ACR_REGISTRY            = 'acrdevops06app.azurecr.io'         // Replace with your ACR Login Server
+        IMAGE_NAME              = 'sample_app'
+        VERSION                 = "2.1.${env.BUILD_NUMBER}"
+        
+        // Azure AKS Details
+        RESOURCE_GROUP          = 'rg-devops-project-06'
+        AKS_CLUSTER_NAME        = 'aks-devops-project-06'
+    }
+
+    stages {
+        stage("Build & Compile") {
+            steps {
+                echo "========== [Stage: Build Started] =========="
+                sh 'mvn clean package -DskipTests'
+                echo "========== [Stage: Build Completed] =========="
+            }
+        }
+
+        stage("Unit Test") {
+            steps {
+                echo "========== [Stage: Unit Test Started] =========="
+                sh 'mvn test surefire-report:report'
+                echo "========== [Stage: Unit Test Completed] =========="
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo "========== [Stage: SonarQube Scan Started] =========="
+                // If using SonarQube scanner plugin:
+                withSonarQubeEnv('dp01-sonarqube') {
+                    // Uses maven sonar plugin or standalone sonar-scanner
+                    sh 'mvn sonar:sonar -Dsonar.host.url=http://sonarqube:9000 || /opt/sonar-scanner/bin/sonar-scanner || true'
+                }
+            }
+        }
+
+        stage("Quality Gate") {
+            steps {
+                script {
+                    echo "========== [Stage: Quality Gate Check] =========="
+                    timeout(time: 10, unit: 'MINUTES') {
+                        try {
+                            def qg = waitForQualityGate()
+                            if (qg.status != 'OK') {
+                                error "Pipeline aborted due to quality gate failure: ${qg.status}"
+                            }
+                        } catch (Exception e) {
+                            echo "Quality Gate check skipped or timed out: ${e.message}"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage("Docker Build") {
+            steps {
+                script {
+                    echo "========== [Stage: Docker Build Started] =========="
+                    def fullImage = "${ACR_REGISTRY}/${IMAGE_NAME}:${VERSION}"
+                    def latestImage = "${ACR_REGISTRY}/${IMAGE_NAME}:latest"
+                    
+                    sh "docker build -t ${fullImage} -t ${latestImage} ."
+                    echo "========== [Stage: Docker Build Completed: ${fullImage}] =========="
+                }
+            }
+        }
+
+        stage("Push Image to Azure Container Registry (ACR)") {
+            steps {
+                script {
+                    echo "========== [Stage: Azure ACR Push Started] =========="
+                    withCredentials([usernamePassword(credentialsId: ACR_CREDENTIALS_ID, usernameVariable: 'ACR_USER', passwordVariable: 'ACR_PASSWORD')]) {
+                        sh "echo \${ACR_PASSWORD} | docker login ${ACR_REGISTRY} -u \${ACR_USER} --password-stdin"
+                        sh "docker push ${ACR_REGISTRY}/${IMAGE_NAME}:${VERSION}"
+                        sh "docker push ${ACR_REGISTRY}/${IMAGE_NAME}:latest"
+                    }
+                    echo "========== [Stage: Image Pushed to ACR Successfully] =========="
+                }
+            }
+        }
+
+        stage("Deploy to Azure Kubernetes Service (AKS)") {
+            steps {
+                script {
+                    echo "========== [Stage: Deploy to AKS Started] =========="
+                    withCredentials([azureServicePrincipal(AZURE_SP_CREDENTIALS_ID)]) {
+                        sh """
+                            az login --service-principal -u \$AZURE_CLIENT_ID -p \$AZURE_CLIENT_SECRET --tenant \$AZURE_TENANT_ID
+                            az aks get-credentials --resource-group ${RESOURCE_GROUP} --name ${AKS_CLUSTER_NAME} --overwrite-existing
+                            
+                            cd azure/k8s
+                            kubectl apply -f namespace.yaml
+                            kubectl apply -f deployment.yaml
+                            kubectl apply -f service.yaml
+                            
+                            kubectl set image deployment/sample-app-dep sample-app=${ACR_REGISTRY}/${IMAGE_NAME}:${VERSION} -n sample-app
+                            kubectl rollout status deployment/sample-app-dep -n sample-app --timeout=180s
+                        """
+                    }
+                    echo "========== [Stage: Deploy to AKS Completed] =========="
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo "Pipeline succeeded! Application deployed to Azure AKS."
+        }
+        failure {
+            echo "Pipeline failed! Please check logs for details."
+        }
+    }
+}

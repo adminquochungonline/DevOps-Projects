@@ -1,0 +1,9 @@
+location                   = "southeastasia"
+environment                = "dev"
+name_suffix                = "dp06hung"
+acr_sku                    = "Basic"
+manage_acr_pull_assignment = true
+aks_sku_tier               = "Free"
+node_vm_size               = "Standard_B2s"
+node_count                 = 1
+node_os_disk_size_gb       = 30
