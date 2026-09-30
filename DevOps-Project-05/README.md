@@ -4,6 +4,71 @@
 
 **In this blog, we are going to deploy a Java Web app on a Docker Container built on an EC2 Instance through the use of Jenkins.**
 
+---
+
+## Tổng quan các cách triển khai
+
+Ngoài tutorial AWS gốc (Phần 1, giữ nguyên nội dung), project có thêm hai cách triển khai tự động hoàn toàn bằng Jenkins pipeline. Cả ba dùng chung mã nguồn app trong `hello-world/`, nhưng mỗi cách có file triển khai riêng nên chạy song song được và không ảnh hưởng nhau.
+
+| | Phần 1 — AWS (tutorial gốc) | Phần 2 — Local | Phần 3 — Azure |
+|---|---|---|---|
+| Jenkins | EC2, cài tay | Container `dp01-jenkins` (bộ CI/CD của DevOps-Project-01) | Container `dp01-jenkins` |
+| Pipeline | Freestyle job cấu hình trên UI | `Jenkinsfile.local` | `azure/Jenkinsfile.infra` → `azure/Jenkinsfile.app` |
+| Hạ tầng | Tạo tay trên AWS console | Docker daemon của máy local | Terraform (`azure/terraform`): ACR + AKS |
+| Đưa artifact tới nơi chạy | Publish Over SSH → `/opt/docker` trên Docker host | Docker socket mount vào Jenkins | `az acr build` → Azure Container Registry |
+| Chạy app | `docker run` trên EC2 Docker host | Container `dp05-regapp` | AKS Deployment 2 replica + Service LoadBalancer |
+| Kiểm tra sau deploy | Mở trình duyệt | Smoke test tự động (trang + gửi form), tự rollback | Smoke test tự động, `kubectl rollout undo` khi rollout fail |
+| URL | `http://<ec2-ip>:8087/webapp/` | `http://localhost:8087/webapp/` | `http://<load-balancer-ip>/webapp/` |
+| Dockerfile / manifest | `hello-world/Dockerfile`, `hello-world/regapp-*.yml` | `docker/Dockerfile` | `docker/Dockerfile`, `azure/k8s/*.yaml` |
+
+### Cấu trúc thư mục
+
+```text
+DevOps-Project-05/
+├── README.md                       # File này
+├── hello-world/                    # App dùng chung (Maven multi-module)
+│   ├── server/                     # Greeter.java + unit test
+│   ├── webapp/                     # index.jsp (form) + register.jsp (xử lý form) -> webapp.war
+│   ├── Dockerfile                  # Phần 1 (AWS tutorial), không đổi
+│   └── regapp-deploy.yml, regapp-service.yml   # Manifest gốc của tutorial, không đổi
+├── docker/Dockerfile               # Image dùng chung cho Phần 2 và Phần 3
+├── .dockerignore                   # Build context chỉ gồm Dockerfile + WAR
+├── Jenkinsfile.local               # Phần 2
+└── azure/                          # Phần 3
+    ├── terraform/                  # RG + ACR + AKS + gán AcrPull
+    ├── k8s/                        # namespace, deployment, service cho AKS
+    ├── Jenkinsfile.infra           # Terraform: plan -> duyệt -> apply/destroy
+    └── Jenkinsfile.app             # Maven -> Sonar -> az acr build -> duyệt -> kubectl rollout -> smoke test
+```
+
+### Thay đổi áp dụng cho mọi phần
+
+Các lỗi dưới đây có sẵn trong mã nguồn tutorial. Bản sửa nằm trong `hello-world/webapp`, nên WAR build ra ở cả ba phần đều có bản sửa.
+
+| Vấn đề trong tutorial gốc | Cách xử lý |
+|---|---|
+| Form gửi tới `action_page.php`, file không tồn tại → bấm Register luôn báo **HTTP 404** | Thêm `register.jsp` xử lý form phía server; `index.jsp` trỏ `action` vào đó |
+| Form dùng GET → mật khẩu hiện trên URL, lưu vào lịch sử trình duyệt và access log | Chuyển sang `method="post"` |
+| Không kiểm tra dữ liệu | `register.jsp` kiểm tra tên, email, số điện thoại (8–15 chữ số), mật khẩu ≥ 8 ký tự và hai mật khẩu khớp nhau; sai thì trả **HTTP 400** kèm danh sách lỗi |
+| Dữ liệu người dùng in lại ra trang | Được escape HTML (chống XSS); mật khẩu không bao giờ được in ra |
+
+> `register.jsp` chỉ xác nhận đăng ký, **không lưu** vào đâu vì app không có database.
+
+Phần 2 và 3 dùng `docker/Dockerfile` thay cho `hello-world/Dockerfile`:
+
+| `hello-world/Dockerfile` (Phần 1) | `docker/Dockerfile` (Phần 2, 3) |
+|---|---|
+| `tomcat:latest`: mỗi lần build có thể ra Tomcat khác, và từ Tomcat 10 trở đi đã chuyển sang `jakarta.*` trong khi app viết cho `javax.servlet` | Ghim `tomcat:9.0.122-jre21-temurin-noble` |
+| Copy `webapps.dist` (manager, host-manager, examples) vào `webapps` | Không copy: container chỉ phục vụ WAR của app |
+| Chạy bằng root | User non-root UID `10001` |
+| `COPY ./*.war`: WAR phải được copy ra thư mục Dockerfile trước | Copy đúng `hello-world/webapp/target/webapp.war`, build context `DevOps-Project-05/` |
+
+---
+
+# Phần 1 — AWS: Jenkins + Docker host trên EC2 (tutorial gốc)
+
+> Nội dung phần này giữ nguyên theo tutorial gốc.
+
 ### Agenda
 
 * Setup Jenkins
@@ -513,6 +578,368 @@ Also, we if access our new dockerized app from our browser on port 8087, the res
 **In this blog, we learned how to automate the build and deploy process using GitHub, Jenkins, Docker, and AWS EC2.**
 
 **Happy Learning!**
+
+---
+
+# Phần 2 — Local: Jenkins pipeline deploy container trên máy local
+
+Tự động hóa Step 6–8 của Phần 1 ngay trên máy local. Jenkins chạy trong container và điều khiển Docker daemon của host qua `/var/run/docker.sock`. Vì vậy không cần Docker host riêng, không cần user `dockeradmin` và không cần plugin Publish Over SSH.
+
+## Tiền điều kiện
+
+Dùng lại bộ CI/CD của DevOps-Project-01 (`DevOps-Project-01/cicd`):
+
+```bash
+docker network create dp01-cicd                      # một lần
+cd DevOps-Project-01/cicd/jenkins   && docker compose up -d --build   # http://localhost:8080
+cd ../sonarqube                     && docker compose up -d           # http://localhost:9000
+```
+
+Image `dp01/jenkins` đã có sẵn JDK 11 (`/opt/java/jdk-11`), Maven, Docker CLI, Terraform và Azure CLI. App này biên dịch ra bytecode Java 1.7: JDK 11 vẫn build được, JDK 21 thì không, nên pipeline build bằng JDK 11.
+
+| Credential | Loại | Dùng khi |
+|---|---|---|
+| `sonarqube-token` | Secret text | `RUN_SONAR=true` (SonarQube → My Account → Security → Generate Token) |
+
+## Tạo job
+
+| Job | Definition | Repository / Branch | Script Path |
+|---|---|---|---|
+| `DevOps-Project-05-local` | Pipeline script from SCM | repo này / `*/HungDang-Version` | `DevOps-Project-05/Jenkinsfile.local` |
+
+Jenkins đọc Jenkinsfile từ Git, nên mọi thay đổi phải được **push** lên nhánh trên thì job mới thấy.
+
+| Tham số | Mặc định | Ý nghĩa |
+|---|---|---|
+| `RUN_SONAR` | `true` | Phân tích SonarQube, project key `devops-project-05` |
+| `HOST_PORT` | `8087` | Port trên host (8080 đã bị Jenkins dùng) |
+| `IMAGE_TAG` | *(rỗng)* | Rỗng = `<BUILD_NUMBER>-<git sha ngắn>` |
+
+## Luồng chạy
+
+```mermaid
+flowchart LR
+    A[Checkout] --> B[Maven clean verify<br/>JDK 11, unit test]
+    B --> C[SonarQube]
+    C --> D[docker build<br/>dp05/regapp:tag]
+    D --> E[docker run dp05-regapp<br/>network dp01-cicd, -p 8087:8080]
+    E --> F{Smoke test<br/>trang + POST register.jsp}
+    F -->|pass| G[Giữ 5 image mới nhất]
+    F -->|fail| R[Chạy lại image trước đó<br/>build FAIL]
+```
+
+1. **Build & Test:** `mvn -B clean verify`. Kết quả JUnit và `webapp.war` được lưu vào build.
+2. **Build Image:** `docker build -f docker/Dockerfile`. `.dockerignore` giới hạn build context chỉ còn Dockerfile + WAR.
+3. **Deploy:** ghi lại image đang chạy, xoá container `dp05-regapp` cũ rồi chạy container mới với `--restart unless-stopped` và `--memory 512m`.
+4. **Smoke Test:** Jenkins gọi container theo tên trên network `dp01-cicd`. Test kiểm tra trang form, rồi gửi thử một đăng ký và chờ trang "Registration successful". Nếu fail, pipeline tự chạy lại image trước đó rồi đánh fail build.
+5. **Prune:** giữ 5 tag `dp05/regapp` mới nhất.
+
+## Kiểm tra và vận hành
+
+```bash
+curl -s http://localhost:8087/webapp/ | grep "New user Register"
+curl -s -d Name=Test -d mobile=0912345678 -d email=t@example.com \
+     -d psw=abcdefgh1 -d psw-repeat=abcdefgh1 \
+     http://localhost:8087/webapp/register.jsp | grep "<h1>"      # Registration successful
+
+docker ps --filter name=dp05-regapp
+docker logs -f dp05-regapp
+docker images dp05/regapp                                        # các bản còn giữ để rollback
+```
+
+Rollback tay về một bản cũ:
+
+```bash
+docker rm -f dp05-regapp
+docker run -d --name dp05-regapp --restart unless-stopped --network dp01-cicd \
+  -p 8087:8080 --memory 512m dp05/regapp:<tag-cũ>
+```
+
+Dọn dẹp: `docker rm -f dp05-regapp && docker images dp05/regapp -q | xargs -r docker rmi`
+
+> Pipeline mount Docker socket vào Jenkins, nghĩa là Jenkins có quyền tương đương root trên host. Cách này chấp nhận được khi học local, không dùng cho môi trường dùng chung.
+
+---
+
+# Phần 3 — Azure: Terraform + Jenkins triển khai lên AKS
+
+Bản Azure của Phần 1. Giữ nguyên ý tưởng (Jenkins build WAR → đóng image Tomcat → chạy container), nhưng thay Docker host EC2 bằng **Azure Kubernetes Service**, vì project đã có sẵn manifest Kubernetes (`regapp-deploy.yml`, `regapp-service.yml`). Toàn bộ hạ tầng được tạo bằng Terraform qua pipeline, không tạo tay trên Portal.
+
+## Kiến trúc
+
+```mermaid
+flowchart LR
+    Dev((Developer)) -->|git push| GH[GitHub<br/>HungDang-Version]
+    GH --> J[Jenkins dp01-jenkins]
+    J -->|1. terraform apply| TF[(Terraform state<br/>Azure Storage<br/>regapp-aks/terraform.tfstate)]
+    subgraph RG[Resource group dev-regapp-rg]
+        ACR[ACR devregappdp05hung]
+        AKS[AKS dev-regapp-aks<br/>1 node Standard_B2s]
+    end
+    J -->|2. az acr build| ACR
+    J -->|3. kubectl apply| AKS
+    AKS -->|kubelet identity + AcrPull| ACR
+    User((Internet user)) -->|:80| LB[Azure Load Balancer<br/>public IP]
+    LB --> P[Pod regapp x2<br/>Tomcat :8080]
+```
+
+### Ánh xạ AWS (Phần 1) → Azure
+
+| Phần 1 — AWS | Phần 3 — Azure |
+|---|---|
+| Tạo EC2 Docker host bằng tay | Terraform tạo AKS (`azure/terraform/main.tf`) |
+| Jenkins trên EC2 | Jenkins container `dp01-jenkins` (dùng lại của DevOps-Project-01) |
+| Freestyle job + Poll SCM | Pipeline as code: `Jenkinsfile.infra`, `Jenkinsfile.app` |
+| Publish Over SSH copy WAR sang `/opt/docker` | `az acr build`: ACR build image từ Dockerfile + WAR, Jenkins không cần Docker daemon hay mật khẩu registry |
+| `docker build` / `docker run` trên Docker host | `kubectl apply` Deployment 2 replica, rolling update |
+| Image `valaxy/regapp` trên Docker Hub (trong `regapp-deploy.yml`) | Registry riêng ACR, tag `<build>-<sha>`, cấm `latest` |
+| User `dockeradmin` + SSH bằng mật khẩu | Không SSH: service principal + kubeconfig tạm trong workspace |
+| Security group mở 8081–9000 | Service `LoadBalancer` port 80 → 8080 |
+| Không có health check | startup / readiness / liveness probe trên `/webapp/` |
+
+### Khác biệt so với manifest gốc
+
+| `hello-world/regapp-*.yml` | `azure/k8s/*.yaml` |
+|---|---|
+| Namespace `default` | Namespace riêng `regapp` |
+| `image: valaxy/regapp` (latest) | `__IMAGE__`, pipeline thay bằng `<acr>.azurecr.io/regapp:<tag>` |
+| `maxUnavailable: 1` | `maxUnavailable: 0`, không giảm capacity khi rollout |
+| Không có resource / probe | requests 100m CPU / 256Mi, limit 512Mi; startup/readiness/liveness probe |
+| Chạy root | `runAsNonRoot`, UID 10001, drop mọi capability, seccomp `RuntimeDefault` |
+| Service `8080:8080` | Service `80 → 8080`, tuỳ chọn `loadBalancerSourceRanges` |
+
+## Tiền điều kiện
+
+1. Jenkins + SonarQube của Phần 2 đang chạy.
+2. Azure subscription đã đăng ký provider `Microsoft.ContainerService`: `az provider register --namespace Microsoft.ContainerService`.
+3. Storage account chứa Terraform state (dùng chung với DevOps-Project-01/04): resource group `tfstate-rg`, container `tfstate`.
+4. Service principal cho Jenkins có quyền như mục [Quyền cho service principal](#quyền-cho-service-principal).
+5. Credentials trong Jenkins (Manage Jenkins → Credentials → System → Global):
+
+| ID | Loại | Nội dung |
+|---|---|---|
+| `azure-sp` | Username with password | appId / client secret của service principal |
+| `azure-tenant` | Secret text | Tenant ID |
+| `azure-subscription` | Secret text | Subscription ID |
+| `sonarqube-token` | Secret text | Token SonarQube (khi `RUN_SONAR=true`) |
+
+`kubectl` không có trong image Jenkins. Pipeline app tự tải bản khớp với phiên bản của cluster, kiểm tra SHA-256, rồi cache ở `$JENKINS_HOME/tools/kubectl/`.
+
+## Tài nguyên được tạo
+
+Tên được sinh theo quy ước, nên pipeline app suy ra được tên resource mà không cần đọc Terraform state:
+
+| Resource | Tên (mặc định `ENVIRONMENT=dev`, `NAME_SUFFIX=dp05hung`) | Ghi chú |
+|---|---|---|
+| Resource group | `dev-regapp-rg` | |
+| Container Registry | `devregappdp05hung` (`<env>regapp<suffix>`) | Basic, admin user tắt. Tên phải duy nhất toàn cầu |
+| AKS | `dev-regapp-aks` | Free tier, 1 node `Standard_B2s`, Azure CNI Overlay, K8s theo mặc định của region |
+| Node resource group | `dev-regapp-aks-nodes-rg` | AKS tự quản: VMSS, Load Balancer, public IP, kubelet identity |
+| Role assignment | AcrPull cho kubelet identity trên ACR | `azurerm_role_assignment.aks_acr_pull` |
+
+**Terraform state** lưu trên Azure Storage, không nằm trong Jenkins:
+
+| | |
+|---|---|
+| Storage account | `hddevopsprojectstg001` (tham số `TFSTATE_STORAGE_ACCOUNT`) |
+| Resource group / container | `tfstate-rg` / `tfstate` |
+| Key | `regapp-aks/terraform.tfstate` (Project-01 dùng `java-app/…`, Project-04 dùng `django-app/…`) |
+
+Trong lúc Terraform chạy, blob state bị khoá bằng lease, nên hai build không ghi state cùng lúc được.
+
+## Quyền cho service principal
+
+| Quyền | Để làm gì |
+|---|---|
+| **Contributor** (subscription hoặc RG đích) | Tạo RG, ACR, AKS; chạy `az acr build`; `az aks get-credentials` |
+| **Role Based Access Control Administrator** có điều kiện chỉ cho gán **AcrPull** | Terraform gán AcrPull cho kubelet identity của AKS |
+| Đọc key của storage account state (`listKeys`, đã có trong Contributor) | Backend `azurerm` đọc và ghi state bằng access key |
+
+AcrPull được gán trong `azure/terraform/main.tf`:
+
+```hcl
+resource "azurerm_role_assignment" "aks_acr_pull" {
+  count                = var.manage_acr_pull_assignment ? 1 : 0
+  scope                = azurerm_container_registry.main.id                           # chỉ registry này
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id
+}
+```
+
+Người thực hiện gán là SP của credential `azure-sp`, trong lúc `terraform apply`. Người nhận là kubelet identity `dev-regapp-aks-agentpool`: identity mà node dùng để pull image. Identity này khác với identity `SystemAssigned` của control plane.
+
+Contributor **không có** `Microsoft.Authorization/roleAssignments/write`. Thiếu role RBAC Administrator thì apply sẽ dừng ở `403 AuthorizationFailed`. Cấp role này một lần bằng account Owner:
+
+1. Subscription → **Access control (IAM)** → Add role assignment → **Role Based Access Control Administrator**.
+2. Members: SP của credential `azure-sp`.
+3. Tab **Conditions** → *Constrain roles and principal types* → chỉ chọn role **AcrPull**, principal type **Service principals**.
+
+> Không nên chọn tuỳ chọn *Allow user to assign all roles except privileged administrative roles*. Với tuỳ chọn đó, SP gán được hầu như mọi role (Contributor, Key Vault Administrator, …) cho bất kỳ ai. Pipeline này chỉ cần AcrPull.
+
+**Không thể cấp RBAC Administrator?** Chạy infra với `MANAGE_ACR_PULL_ASSIGNMENT=false`, rồi dùng account Owner hoặc User Access Administrator chạy lệnh trong output `acr_pull_grant_command`. Mỗi lần AKS bị tạo lại (destroy/apply), kubelet identity sẽ đổi và phải gán lại quyền.
+
+## Tạo job
+
+| Job | Script Path | Branch |
+|---|---|---|
+| `DevOps-Project-05-azure-infra` | `DevOps-Project-05/azure/Jenkinsfile.infra` | `*/HungDang-Version` |
+| `DevOps-Project-05-azure-app` | `DevOps-Project-05/azure/Jenkinsfile.app` | `*/HungDang-Version` |
+
+Cả hai là *Pipeline script from SCM*, trỏ vào repo này.
+
+### Tham số
+
+`Jenkinsfile.infra`:
+
+| Tham số | Mặc định | Ý nghĩa |
+|---|---|---|
+| `TF_ACTION` | `plan-only` | `plan-only` / `apply` / `destroy`. `apply` và `destroy` dừng chờ duyệt sau khi plan |
+| `ENVIRONMENT` | `dev` | Tiền tố tên resource. **Phải khớp với job app** |
+| `LOCATION` | `southeastasia` | Region |
+| `NAME_SUFFIX` | `dp05hung` | Hậu tố cho tên ACR (duy nhất toàn cầu). **Phải khớp với job app** |
+| `NODE_VM_SIZE` | `Standard_B2s` | Tối thiểu 2 vCPU / 4 GiB. Đổi sang `Standard_D2as_v5` nếu region hạn chế B-series |
+| `NODE_COUNT` | `1` | 1–5 node |
+| `MANAGE_ACR_PULL_ASSIGNMENT` | `true` | Terraform tự gán AcrPull, xem mục quyền |
+| `TFSTATE_STORAGE_ACCOUNT` | `hddevopsprojectstg001` | Storage account chứa state |
+
+`Jenkinsfile.app`:
+
+| Tham số | Mặc định | Ý nghĩa |
+|---|---|---|
+| `RUN_SONAR` | `true` | Phân tích SonarQube |
+| `DEPLOY` | `true` | `false` = chỉ build và đẩy image lên ACR, không deploy |
+| `ENVIRONMENT`, `NAME_SUFFIX` | `dev`, `dp05hung` | Phải khớp với job infra, dùng để suy ra tên ACR, RG và AKS |
+| `IMAGE_TAG` | *(rỗng)* | Rỗng = `<BUILD_NUMBER>-<git sha ngắn>`. `latest` bị từ chối |
+
+## Quy trình triển khai
+
+```mermaid
+sequenceDiagram
+    participant I as DevOps-Project-05-azure-infra
+    participant TF as Terraform state
+    participant A as DevOps-Project-05-azure-app
+    participant ACR as ACR
+    participant K as AKS
+
+    I->>TF: plan → duyệt → apply
+    Note over I,TF: RG, ACR, AKS, AcrPull
+    A->>A: mvn clean verify (JDK 11) + SonarQube
+    A->>ACR: az acr build regapp:<build>-<sha>
+    A->>K: preflight: cluster Succeeded + kubelet có AcrPull
+    A->>A: chờ duyệt
+    A->>K: kubectl apply namespace, deployment, service
+    K->>ACR: pull image (kubelet identity)
+    A->>K: rollout status (fail → rollout undo)
+    A->>K: chờ public IP của LoadBalancer
+    A->>A: smoke test http://<ip>/webapp/ + POST register.jsp
+```
+
+### Bước 1: Tạo hạ tầng
+
+1. Chạy `DevOps-Project-05-azure-infra` với `TF_ACTION=plan-only` để xem plan mà không thay đổi gì. Lần đầu plan phải ra `Plan: 4 to add, 0 to change, 0 to destroy`.
+2. Chạy lại với `TF_ACTION=apply`, đọc plan trong log, rồi bấm **Yes, apply** ở stage Approval.
+3. Chờ khoảng 5–6 phút (riêng AKS khoảng 4–5 phút). Stage Output in ra `acr_login_server`, `aks_name`, `get_credentials_command`…
+
+Mỗi lần chạy, pipeline xoá `.terraform/`, file lock và state local cũ rồi `terraform init -reconfigure`. Vì vậy workspace Jenkins không bao giờ giữ state.
+
+### Bước 2: Build và deploy app
+
+Chạy `DevOps-Project-05-azure-app`, giữ `DEPLOY=true`:
+
+| Stage | Việc làm |
+|---|---|
+| Build & Test (Maven) | `mvn -B clean verify` bằng JDK 11, lưu kết quả JUnit và `webapp.war` |
+| Code Quality (SonarQube) | Project key `devops-project-05` |
+| Build Image (ACR) | `az acr build --file docker/Dockerfile`, build context chỉ gồm Dockerfile + WAR (vài KB). Báo lỗi rõ nếu ACR chưa tồn tại |
+| Preflight: AKS + AcrPull | Kiểm tra cluster `Succeeded` và kubelet identity đã có AcrPull. Thiếu thì dừng, in sẵn lệnh cần chạy, thay vì để pod kẹt `ImagePullBackOff` |
+| Approval to Deploy | Bấm **Yes, deploy** |
+| Deploy to AKS | Tải kubectl, `az aks get-credentials` vào kubeconfig trong workspace, thay `__IMAGE__`, `kubectl apply`, ghi `change-cause`, `rollout status --timeout=5m`. Fail thì `rollout undo`. Sau đó chờ public IP của Service |
+| Smoke Test | Chờ trang "New user Register", rồi gửi thử form và chờ "Registration successful" |
+
+Cuối log có dòng `Smoke test passed (form + register): http://<ip>/webapp/`.
+
+Lần deploy sau chỉ cần chạy lại job app. Mỗi build tạo một tag image mới và một revision mới của Deployment. Không cần chạy lại job infra.
+
+### Bước 3: Kiểm tra
+
+```bash
+az aks get-credentials -g dev-regapp-rg -n dev-regapp-aks
+kubectl -n regapp get deploy,rs,pods,svc -o wide
+kubectl -n regapp rollout history deployment/regapp
+kubectl -n regapp logs deploy/regapp --tail 100
+
+IP=$(kubectl -n regapp get svc regapp -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+curl -s "http://$IP/webapp/" | grep "New user Register"
+az acr repository show-tags -n devregappdp05hung --repository regapp -o table
+```
+
+### Rollback
+
+```bash
+kubectl -n regapp rollout history deployment/regapp        # CHANGE-CAUSE ghi job và image của từng revision
+kubectl -n regapp rollout undo deployment/regapp            # về revision ngay trước
+kubectl -n regapp rollout undo deployment/regapp --to-revision=<n>
+```
+
+Deployment giữ 5 revision (`revisionHistoryLimit: 5`). Nếu rollout của một build bị fail, pipeline tự `rollout undo`.
+
+> Không rollback bằng cách chạy lại job với `IMAGE_TAG` của bản cũ: job sẽ build lại **code hiện tại** và ghi đè tag đó. Muốn deploy lại một commit cũ thì chạy job trên commit đó.
+
+Lần deploy sau, pipeline sẽ `kubectl apply` lại manifest và ghi đè bản rollback tay. Hãy sửa code và push để bản mới trở thành bản đúng.
+
+### Bước 4: Dọn dẹp
+
+Chạy `DevOps-Project-05-azure-infra` với `TF_ACTION=destroy` rồi duyệt. Terraform xoá toàn bộ 4 resource, gồm cả node resource group, Load Balancer và public IP do AKS tạo. Blob state vẫn còn nhưng rỗng.
+
+Node AKS và public IP tính tiền theo giờ kể cả khi không có traffic. Học xong nên destroy ngay.
+
+## Đã kiểm chứng
+
+Chạy end-to-end ngày 30/09/2026 trên subscription thật:
+
+| Bước | Kết quả |
+|---|---|
+| infra `apply` | 4 resource được tạo: RG 11s, ACR 34s, AKS 4m40s, AcrPull 25s |
+| app deploy | Image `devregappdp05hung.azurecr.io/regapp:1-860fb12` được build trong 32s. Preflight báo `AcrPull present`. Rollout OK trên node K8s v1.35.7. Smoke test pass (trang + form) |
+| infra `destroy` | Resource group `dev-regapp-rg` đã bị xoá |
+
+## Sự cố thường gặp
+
+| Triệu chứng | Nguyên nhân | Xử lý |
+|---|---|---|
+| `403 AuthorizationFailed` ở `azurerm_role_assignment.aks_acr_pull` | SP chỉ có Contributor | Cấp RBAC Administrator có điều kiện AcrPull, hoặc dùng `MANAGE_ACR_PULL_ASSIGNMENT=false` + gán tay |
+| Preflight báo thiếu AcrPull / pod `ImagePullBackOff` | Chưa gán AcrPull, RBAC chưa propagate, hoặc AKS vừa tạo lại (kubelet identity mới) | Chạy lại infra `apply`, chờ 2–5 phút rồi chạy lại job app |
+| `registry ... not found` / `AKS cluster ... is 'missing'` | Chưa chạy infra, hoặc `ENVIRONMENT`/`NAME_SUFFIX` lệch giữa hai job | Chạy infra `apply` với cùng tham số |
+| ACR báo tên đã tồn tại | Tên ACR phải duy nhất toàn cầu | Đổi `NAME_SUFFIX` ở **cả hai** job |
+| `SkuNotAvailable` / hết quota khi tạo AKS | Region hạn chế VM size | `NODE_VM_SIZE=Standard_D2as_v5` |
+| `Error acquiring the state lock` | Một build khác đang chạy, hoặc build trước bị abort giữa chừng | Chờ build kia xong. Nếu lock bị kẹt thì `terraform force-unlock <LOCK_ID>` (ID nằm trong thông báo lỗi) |
+| Service không có external IP sau 5 phút | Hết quota public IP, hoặc Load Balancer đang lỗi | `kubectl -n regapp describe svc regapp`, xem Events |
+| Rollout timeout | Probe fail hoặc pod không đủ tài nguyên | Xem `kubectl -n regapp get events --sort-by=.lastTimestamp` (pipeline cũng in ra trước khi undo) |
+
+## Bảo mật
+
+- Service `LoadBalancer` **mở ra internet và không có xác thực**, giống manifest gốc. Muốn giới hạn IP thì bỏ comment `loadBalancerSourceRanges` trong `azure/k8s/service.yaml`. Dùng thật thì nên đặt Ingress/Application Gateway + WAF và TLS phía trước.
+- Pull image bằng kubelet managed identity + AcrPull chỉ trên registry này. ACR tắt admin user, không có mật khẩu registry ở đâu cả.
+- AKS để API server public và bật local account để pipeline dùng `az aks get-credentials` mà không cần kubelogin. Production nên bật Entra ID + Azure RBAC cho Kubernetes, tắt local account và giới hạn `api_server_authorized_ip_ranges`.
+- Kubeconfig và profile Azure CLI của mỗi build nằm trong workspace, bị `cleanWs()` xoá khi build kết thúc. Secret chỉ đi qua `withCredentials`.
+- Pod chạy non-root, không có service account token, drop mọi capability.
+- Đổi mật khẩu admin mặc định của Jenkins (`admin123`) và thu hồi API token không dùng nữa.
+
+## Chạy Terraform tay (không qua Jenkins)
+
+```bash
+cd DevOps-Project-05/azure/terraform
+cp terraform.tfvars.example terraform.tfvars
+terraform init -backend-config="storage_account_name=hddevopsprojectstg001"
+terraform plan
+terraform apply
+terraform output
+terraform destroy        # dọn dẹp
+```
+
+Phải đăng nhập bằng `az login`, hoặc export `ARM_CLIENT_ID`/`ARM_CLIENT_SECRET`/`ARM_TENANT_ID`/`ARM_SUBSCRIPTION_ID`. Chạy tay và chạy qua Jenkins dùng **chung một state**, nên đừng chạy cả hai cùng lúc.
+
+---
 
 ## 🛠️ Author & Community  
 
