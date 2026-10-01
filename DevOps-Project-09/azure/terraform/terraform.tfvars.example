@@ -1,0 +1,19 @@
+resource_group_name = "rg-devsecops-netflix-azure"
+location            = "southeastasia"
+prefix              = "netflix-devsecops"
+environment         = "dev"
+vm_size             = "Standard_B2ms"
+admin_username      = "azureuser"
+ssh_public_key_path = "~/.ssh/id_rsa.pub"
+allowed_source_ip   = "*"
+
+# Bật nếu muốn tạo cụm AKS trên Azure
+enable_aks     = false
+aks_node_count = 1
+aks_vm_size    = "Standard_B2s"
+
+tags = {
+  Project     = "DevSecOps-Netflix-Azure"
+  Environment = "Dev"
+  ManagedBy   = "Terraform"
+}

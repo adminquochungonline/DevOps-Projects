@@ -1,0 +1,75 @@
+# DevSecOps All-in-One Tools Container
+# Chứa sẵn: Trivy, Node.js 18, SonarScanner CLI, OWASP Dependency Check, Docker CLI, Kubectl, Azure CLI
+FROM ubuntu:22.04
+
+LABEL maintainer="DevSecOps Azure Project"
+LABEL description="Containerized DevSecOps tools runner with Trivy, Sonar-Scanner, Node.js, OWASP, Docker, Kubectl, Azure CLI"
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+# 1. Cài đặt các package cơ bản
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    git \
+    unzip \
+    gnupg \
+    lsb-release \
+    ca-certificates \
+    apt-transport-https \
+    jq \
+    openjdk-17-jre-headless \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Cài đặt Docker CLI (để giao tiếp với Docker Host qua /var/run/docker.sock)
+RUN install -m 0755 -d /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+    chmod a+r /etc/apt/keyrings/docker.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
+    apt-get update && \
+    apt-get install -y docker-ce-cli && \
+    rm -rf /var/lib/apt/lists/*
+
+# 3. Cài đặt Trivy (Aqua Security) - Quét lỗ hổng FS và Image
+RUN wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | tee /usr/share/keyrings/trivy.gpg > /dev/null && \
+    echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | tee -a /etc/apt/sources.list.d/trivy.list && \
+    apt-get update && \
+    apt-get install -y trivy && \
+    rm -rf /var/lib/apt/lists/*
+
+# 4. Cài đặt Node.js 18.x (cho build Netflix frontend)
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g npm@latest && \
+    rm -rf /var/lib/apt/lists/*
+
+# 5. Cài đặt SonarQube Scanner CLI
+ENV SONAR_SCANNER_VERSION=5.0.1.3006
+RUN curl -o /tmp/sonar-scanner.zip -L "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux.zip" && \
+    unzip /tmp/sonar-scanner.zip -d /opt && \
+    mv /opt/sonar-scanner-${SONAR_SCANNER_VERSION}-linux /opt/sonar-scanner && \
+    ln -s /opt/sonar-scanner/bin/sonar-scanner /usr/local/bin/sonar-scanner && \
+    rm /tmp/sonar-scanner.zip
+
+# 6. Cài đặt OWASP Dependency-Check CLI
+ENV OWASP_DC_VERSION=9.0.9
+RUN curl -o /tmp/dependency-check.zip -L "https://github.com/jeremylong/DependencyCheck/releases/download/v${OWASP_DC_VERSION}/dependency-check-${OWASP_DC_VERSION}-release.zip" && \
+    unzip /tmp/dependency-check.zip -d /opt && \
+    ln -s /opt/dependency-check/bin/dependency-check.sh /usr/local/bin/dependency-check && \
+    rm /tmp/dependency-check.zip
+
+# 7. Cài đặt Kubectl & Azure CLI (az)
+RUN curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg && \
+    echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list && \
+    curl -sL https://aka.ms/InstallAzureCLIDeb | bash && \
+    apt-get update && \
+    apt-get install -y kubectl && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Container duy trì trạng thái chạy nền để pipeline gọi vào
+CMD ["tail", "-f", "/dev/null"]

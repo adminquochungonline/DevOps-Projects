@@ -1,0 +1,191 @@
+// Pipeline triển khai hạ tầng Azure bằng Terraform cho DevOps-Project-09
+// Khởi tạo các tài nguyên: Resource Group, VNet, Subnet, NSG, VM Docker host, ACR, (AKS tùy chọn).
+//
+// Credentials sử dụng từ Jenkins:
+//   - azure-sp           (Username with password): Azure Service Principal (Client ID & Secret)
+//   - azure-tenant       (Secret text): Azure Tenant ID
+//   - azure-subscription (Secret text): Azure Subscription ID
+//   - vmss-ssh-pubkey    (Secret text): SSH Public key cho VM Linux
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 45, unit: 'MINUTES')
+    }
+
+    parameters {
+        choice(
+            name: 'TF_ACTION',
+            choices: ['plan-only', 'apply', 'destroy'],
+            description: 'Hành động Terraform. "apply" hoặc "destroy" sẽ dừng lại chờ phê duyệt (Approval) sau bước Plan.'
+        )
+        string(
+            name: 'ENVIRONMENT',
+            defaultValue: 'dev',
+            description: 'Môi trường triển khai (ví dụ: dev, staging, prod).'
+        )
+        string(
+            name: 'LOCATION',
+            defaultValue: 'southeastasia',
+            description: 'Azure Region (ví dụ: southeastasia, eastus).'
+        )
+        string(
+            name: 'NAME_SUFFIX',
+            defaultValue: 'dp09hung',
+            description: 'Hậu tố định danh tài nguyên (ACR sẽ có tên: <ENVIRONMENT>netflix<NAME_SUFFIX>acr).'
+        )
+        string(
+            name: 'VM_SIZE',
+            defaultValue: 'Standard_B2ms',
+            description: 'Cấu hình Azure VM (khuyến nghị tối thiểu 2 vCPU, 8GB RAM).'
+        )
+        booleanParam(
+            name: 'ENABLE_AKS',
+            defaultValue: false,
+            description: 'Triển khai thêm cụm Azure Kubernetes Service (AKS).'
+        )
+        string(
+            name: 'TFSTATE_STORAGE_ACCOUNT',
+            defaultValue: 'hddevopsprojectstg001',
+            description: 'Azure Storage Account lưu trữ Terraform remote state (resource group: tfstate-rg, container: tfstate).'
+        )
+    }
+
+    environment {
+        INFRA_DIR = 'DevOps-Project-09/azure/terraform'
+    }
+
+    stages {
+        stage('Checkout & Tool Check') {
+            steps {
+                script {
+                    echo "=== Kiểm tra phiên bản Terraform ==="
+                    sh 'terraform version || docker run --rm hashicorp/terraform:1.9.8 version'
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET'),
+                    string(credentialsId: 'azure-tenant', variable: 'ARM_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'ARM_SUBSCRIPTION_ID'),
+                    string(credentialsId: 'vmss-ssh-pubkey', variable: 'SSH_PUB_KEY')
+                ]) {
+                    dir("${INFRA_DIR}") {
+                        sh '''
+                            set -e
+                            export TF_VAR_environment="${ENVIRONMENT:-dev}"
+                            export TF_VAR_location="${LOCATION:-southeastasia}"
+                            export TF_VAR_name_suffix="${NAME_SUFFIX:-dp09hung}"
+                            export TF_VAR_vm_size="${VM_SIZE:-Standard_B2ms}"
+                            export TF_VAR_enable_aks="${ENABLE_AKS:-false}"
+                            export TF_VAR_ssh_public_key="${SSH_PUB_KEY:-}"
+
+                            # Xóa local state cache để luôn đồng bộ chính xác với Azure Remote Backend
+                            rm -rf .terraform .terraform.lock.hcl terraform.tfstate terraform.tfstate.backup
+
+                            echo "=== Khởi tạo Terraform với Azure Remote State ==="
+                            terraform init -input=false -reconfigure \
+                                -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT:-hddevopsprojectstg001}"
+
+                            terraform validate
+
+                            echo "=== Thực hiện Terraform Plan (${TF_ACTION}) ==="
+                            if [ "${TF_ACTION}" = "destroy" ]; then
+                                terraform plan -destroy -input=false -out=tfplan
+                            else
+                                terraform plan -input=false -out=tfplan
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Approval') {
+            when {
+                expression { return params.TF_ACTION == 'apply' || params.TF_ACTION == 'destroy' }
+            }
+            steps {
+                script {
+                    timeout(time: 30, unit: 'MINUTES') {
+                        input(
+                            message: "Vui lòng xem lại kế hoạch Terraform Plan ở trên. Bạn có đồng ý thực hiện '${params.TF_ACTION}' cho môi trường '${params.ENVIRONMENT}' không?",
+                            ok: "Đồng ý (${params.TF_ACTION})"
+                        )
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Apply / Destroy') {
+            when {
+                expression { return params.TF_ACTION == 'apply' || params.TF_ACTION == 'destroy' }
+            }
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET'),
+                    string(credentialsId: 'azure-tenant', variable: 'ARM_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'ARM_SUBSCRIPTION_ID'),
+                    string(credentialsId: 'vmss-ssh-pubkey', variable: 'SSH_PUB_KEY')
+                ]) {
+                    dir("${INFRA_DIR}") {
+                        sh '''
+                            set -e
+                            export TF_VAR_environment="${ENVIRONMENT:-dev}"
+                            export TF_VAR_location="${LOCATION:-southeastasia}"
+                            export TF_VAR_name_suffix="${NAME_SUFFIX:-dp09hung}"
+                            export TF_VAR_vm_size="${VM_SIZE:-Standard_B2ms}"
+                            export TF_VAR_enable_aks="${ENABLE_AKS:-false}"
+                            export TF_VAR_ssh_public_key="${SSH_PUB_KEY:-}"
+
+                            echo "=== Thực thi áp dụng Terraform: ${TF_ACTION} ==="
+                            terraform apply -input=false -auto-approve tfplan
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Infrastructure Outputs') {
+            when {
+                expression { return params.TF_ACTION == 'apply' }
+            }
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET'),
+                    string(credentialsId: 'azure-tenant', variable: 'ARM_TENANT_ID'),
+                    string(credentialsId: 'azure-subscription', variable: 'ARM_SUBSCRIPTION_ID')
+                ]) {
+                    dir("${INFRA_DIR}") {
+                        sh '''
+                            echo "========================================================"
+                            echo "   THÔNG TIN HẠ TẦNG TRIỂN KHAI THÀNH CÔNG TRÊN AZURE   "
+                            echo "========================================================"
+                            terraform output
+                            echo "========================================================"
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs notFailBuild: true
+        }
+        success {
+            echo "Pipeline hạ tầng Terraform hoàn thành thành công!"
+        }
+        failure {
+            echo "Pipeline hạ tầng Terraform thất bại. Vui lòng kiểm tra log lỗi bên trên."
+        }
+    }
+}

@@ -1,0 +1,243 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'ACR_SERVER', defaultValue: 'registerappacr.azurecr.io', description: 'Azure Container Registry login server')
+        string(name: 'IMAGE_NAME', defaultValue: 'netflix-clone', description: 'Tên Docker Image cho ứng dụng')
+        string(name: 'TMDB_API_KEY', defaultValue: '', description: 'TMDB API Key (để trống nếu đã có trong credential hoặc dùng demo key)')
+        booleanParam(name: 'RUN_SONAR', defaultValue: true, description: 'Chạy phân tích mã nguồn SonarQube')
+        booleanParam(name: 'RUN_TRIVY_FS', defaultValue: true, description: 'Chạy quét lỗ hổng FileSystem bằng Trivy')
+        booleanParam(name: 'RUN_TRIVY_IMAGE', defaultValue: true, description: 'Chạy quét lỗ hổng Docker Image bằng Trivy')
+    }
+
+    environment {
+        // Cấu hình SonarQube đang chạy sẵn
+        SONAR_HOST_URL       = 'http://dp01-sonarqube:9000'
+        SONAR_CRED_ID        = 'sonarqube-token'
+        SONAR_SCANNER_IMAGE  = 'sonarsource/sonar-scanner-cli:latest'
+
+        // Cấu hình mạng và container Jenkins
+        CICD_NETWORK         = 'dp01-cicd'
+        JENKINS_CONTAINER    = 'dp01-jenkins'
+
+        // Cấu hình công cụ bảo mật Trivy trong Docker container
+        TRIVY_IMAGE          = 'aquasec/trivy:0.74.0'
+        NODE_IMAGE           = 'node:18-alpine'
+
+        // Demo key fallback nếu chưa nhập param
+        DEFAULT_TMDB_KEY     = 'AJ7AYe14eca3e76864yah319b92'
+    }
+
+    stages {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout Code') {
+            steps {
+                git branch: 'main', url: 'https://github.com/Aj7Ay/Netflix-clone.git'
+            }
+        }
+
+        stage('Verify Containers & Tools') {
+            steps {
+                script {
+                    echo "=== Kiểm tra SonarQube đang chạy ==="
+                    sh """
+                        docker ps --filter "name=sonarqube" --format "Container: {{.Names}} | Status: {{.Status}} | Ports: {{.Ports}}"
+                        curl -s ${SONAR_HOST_URL}/api/system/status || echo "Waiting for SonarQube response..."
+                    """
+                    echo "=== Kiểm tra Trivy Image trong Docker ==="
+                    sh "docker run --rm ${TRIVY_IMAGE} --version"
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                script {
+                    echo "=== Chạy npm install bằng Node container ==="
+                    sh """
+                        docker run --rm \
+                            --volumes-from ${JENKINS_CONTAINER} \
+                            -w "${WORKSPACE}" \
+                            ${NODE_IMAGE} \
+                            npm install --legacy-peer-deps
+                    """
+                }
+            }
+        }
+
+        stage('SonarQube Code Quality Analysis') {
+            when {
+                expression { return params.RUN_SONAR }
+            }
+            steps {
+                script {
+                    echo "=== Chạy SonarQube Scanner thông qua Docker Container ==="
+                    // Sử dụng token SonarQube đã cấu hình sẵn trong credentials của Jenkins (id: sonarqube-token)
+                    withCredentials([string(credentialsId: env.SONAR_CRED_ID, variable: 'SONAR_TOKEN')]) {
+                        sh """
+                            docker run --rm \
+                                --network ${CICD_NETWORK} \
+                                --volumes-from ${JENKINS_CONTAINER} \
+                                -w "${WORKSPACE}" \
+                                -e SONAR_HOST_URL="${SONAR_HOST_URL}" \
+                                -e SONAR_TOKEN="${SONAR_TOKEN}" \
+                                ${SONAR_SCANNER_IMAGE} \
+                                -Dsonar.projectKey=netflix-clone-azure \
+                                -Dsonar.projectName="Netflix-Clone-Azure" \
+                                -Dsonar.sources=. \
+                                -Dsonar.exclusions="node_modules/**,reports/**,**/*.txt"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('SonarQube Quality Gate Check') {
+            when {
+                expression { return params.RUN_SONAR }
+            }
+            steps {
+                timeout(time: 2, unit: 'MINUTES') {
+                    script {
+                        echo "=== Kiểm tra trạng thái Quality Gate từ SonarQube ==="
+                        withCredentials([string(credentialsId: env.SONAR_CRED_ID, variable: 'SONAR_TOKEN')]) {
+                            sh """
+                                QG_STATUS=\$(curl -s -u \${SONAR_TOKEN}: "${SONAR_HOST_URL}/api/qualitygates/project_status?projectKey=netflix-clone-azure" | grep -o '"status":"[^"]*"' | cut -d':' -f2 | tr -d '"' || echo "UNKNOWN")
+                                echo "SonarQube Quality Gate Status: \${QG_STATUS}"
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Trivy Filesystem Security Scan') {
+            when {
+                expression { return params.RUN_TRIVY_FS }
+            }
+            steps {
+                script {
+                    echo "=== Quét lỗ hổng FileSystem bằng container Trivy ==="
+                    sh """
+                        docker run --rm \
+                            --volumes-from ${JENKINS_CONTAINER} \
+                            -v /var/run/docker.sock:/var/run/docker.sock \
+                            -w "${WORKSPACE}" \
+                            ${TRIVY_IMAGE} fs \
+                            --severity HIGH,CRITICAL \
+                            --exit-code 0 \
+                            --format table \
+                            -o "${WORKSPACE}/trivyfs.txt" .
+                        
+                        cat "${WORKSPACE}/trivyfs.txt"
+                    """
+                }
+            }
+        }
+
+        stage('Docker Build Image') {
+            steps {
+                script {
+                    def activeTmdbKey = params.TMDB_API_KEY ?: env.DEFAULT_TMDB_KEY
+                    echo "=== Đóng gói Docker Image cho Netflix App ==="
+                    sh """
+                        docker build \
+                            --build-arg TMDB_V3_API_KEY=${activeTmdbKey} \
+                            -t ${params.ACR_SERVER}/${params.IMAGE_NAME}:${BUILD_NUMBER} \
+                            -t ${params.ACR_SERVER}/${params.IMAGE_NAME}:latest .
+                    """
+                }
+            }
+        }
+
+        stage('Trivy Docker Image Scan') {
+            when {
+                expression { return params.RUN_TRIVY_IMAGE }
+            }
+            steps {
+                script {
+                    echo "=== Quét lỗ hổng Docker Image bằng container Trivy ==="
+                    sh """
+                        docker run --rm \
+                            --volumes-from ${JENKINS_CONTAINER} \
+                            -v /var/run/docker.sock:/var/run/docker.sock \
+                            -w "${WORKSPACE}" \
+                            ${TRIVY_IMAGE} image \
+                            --severity HIGH,CRITICAL \
+                            --exit-code 0 \
+                            --format table \
+                            -o "${WORKSPACE}/trivyimage.txt" \
+                            ${params.ACR_SERVER}/${params.IMAGE_NAME}:${BUILD_NUMBER}
+                        
+                        cat "${WORKSPACE}/trivyimage.txt"
+                    """
+                }
+            }
+        }
+
+        stage('Push Image to Azure ACR') {
+            steps {
+                script {
+                    echo "=== Đăng nhập và đẩy image lên Azure Container Registry ==="
+                    // Sử dụng credential azure-acr-credentials hoặc azure-sp nếu có
+                    try {
+                        withCredentials([usernamePassword(credentialsId: 'azure-acr-credentials', usernameVariable: 'ACR_USER', passwordVariable: 'ACR_PASS')]) {
+                            sh """
+                                echo "\${ACR_PASS}" | docker login ${params.ACR_SERVER} -u "\${ACR_USER}" --password-stdin
+                                docker push ${params.ACR_SERVER}/${params.IMAGE_NAME}:${BUILD_NUMBER}
+                                docker push ${params.ACR_SERVER}/${params.IMAGE_NAME}:latest
+                            """
+                        }
+                    } catch (Exception e) {
+                        echo "Warning: Không tìm thấy credential 'azure-acr-credentials', thử với 'azure-sp': ${e.message}"
+                        withCredentials([usernamePassword(credentialsId: 'azure-sp', usernameVariable: 'SP_ID', passwordVariable: 'SP_SECRET')]) {
+                            sh """
+                                echo "\${SP_SECRET}" | docker login ${params.ACR_SERVER} -u "\${SP_ID}" --password-stdin
+                                docker push ${params.ACR_SERVER}/${params.IMAGE_NAME}:${BUILD_NUMBER}
+                                docker push ${params.ACR_SERVER}/${params.IMAGE_NAME}:latest
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Container on Azure Host') {
+            steps {
+                script {
+                    echo "=== Triển khai container ứng dụng Netflix trên cổng 8081 ==="
+                    sh """
+                        docker rm -f netflix-app || true
+                        docker run -d \
+                            --name netflix-app \
+                            --restart unless-stopped \
+                            -p 8081:80 \
+                            ${params.ACR_SERVER}/${params.IMAGE_NAME}:latest
+                        docker ps --filter "name=netflix-app"
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                echo "Pipeline hoàn thành với trạng thái: ${currentBuild.result ?: 'SUCCESS'}"
+                // Lưu lại các báo cáo scan làm artifacts của build
+                archiveArtifacts artifacts: '*.txt', allowEmptyArchive: true
+            }
+        }
+        success {
+            echo "Triển khai ứng dụng Netflix Clone lên Azure thành công!"
+        }
+        failure {
+            echo "Pipeline thất bại! Vui lòng kiểm tra log chi tiết từ SonarQube hoặc Trivy scan."
+        }
+    }
+}
